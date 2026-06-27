@@ -443,12 +443,3 @@ performs compared to what you'd expect if each drug acted independently.
 - Best AUROC: **{best_auroc:.4f}**
                     """)
 
-st.markdown("---")
-st.markdown("""
-<div style="text-align:center; color:#78909c; font-size:13px;">
-ProteinSynergyDock · Aprameya Bharadwaj · DSCE Bangalore 2026<br>
-<a href="https://github.com/Aprameya05/ProteinSynergyDock">GitHub</a> · 
-<a href="https://github.com/Aprameya05/ProteinWhisper">ProteinWhisper</a> · 
-<a href="https://github.com/Aprameya05/DrugSynergy3D">DrugSynergy3D</a>
-</div>
-""", unsafe_allow_html=True)
