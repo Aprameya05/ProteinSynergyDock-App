@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, global_mean_pool
 from torch_geometric.data import Data, Batch
 from rdkit import Chem
-from rdkit.Chem import AllChem, Draw
+from rdkit.Chem import AllChem
 import py3Dmol
 import numpy as np
 import os
@@ -228,6 +228,7 @@ def show_3d_molecules(smiles_a, smiles_b, name_a="Drug A", name_b="Drug B", heig
 # ── 2D Structure images ───────────────────────────────────────────────────────
 
 def show_2d_structures(smiles_a, smiles_b):
+    st.info("2D structure view requires additional system libraries. Use 3D Interactive mode.")
     mols, names = [], []
     for smi, name in [(smiles_a, "Drug A (blue)"), (smiles_b, "Drug B (orange)")]:
         mol = Chem.MolFromSmiles(smi) if smi else None
