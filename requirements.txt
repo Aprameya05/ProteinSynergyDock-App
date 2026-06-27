@@ -1,8 +1,8 @@
-echo streamlit > requirements.txt
-echo torch >> requirements.txt
-echo torch-geometric >> requirements.txt
-echo rdkit >> requirements.txt
-echo py3Dmol >> requirements.txt
-echo numpy >> requirements.txt
-echo pandas >> requirements.txt
-echo scikit-learn >> requirements.txt
+streamlit
+torch
+torch-geometric
+rdkit
+py3Dmol
+numpy
+pandas
+scikit-learn
