@@ -1,7 +1,7 @@
 streamlit
 torch
 torch-geometric
-rdkit
+rdkit==2024.3.5
 py3Dmol
 numpy
 pandas
