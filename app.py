@@ -514,6 +514,12 @@ with col2:
 # ── Full pipeline on button click ─────────────────────────────────────────────
 
 if run_btn:
+    if run_btn:
+    # Debug: check what's available
+    import shutil
+    vina_found = shutil.which('vina') or shutil.which('autodock_vina') or shutil.which('vina_1.2.6_linux_x86_64')
+    obabel_found = shutil.which('obabel')
+    st.info(f"Vina: {vina_found} | Obabel: {obabel_found}")
     if not smiles_a or not smiles_b:
         st.error("Please enter SMILES for both drugs")
         st.stop()
