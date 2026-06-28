@@ -11,7 +11,7 @@
 *Vemurafenib (cyan) and Trametinib (orange) docked inside BRAF kinase (PDB: 3OG7). FDA-approved combination for BRAF V600E melanoma.*
 
 ---
-
+![Architecture](architecture.png)
 ## The problem
 
 Drug combination screening is expensive. Labs test thousands of pairs in cell cultures to find which ones actually synergize. Most computational tools try to shortcut this by predicting synergy from SMILES strings alone — essentially treating molecules as text.
@@ -37,25 +37,7 @@ You give it three things: two drug SMILES and a PDB ID. It does the rest automat
 
 Trained on 231 real NCI ALMANAC synergy measurements with 12 AutoDock Vina docking runs across cancer targets including ABL1, EGFR, BRAF, PARP1, and CDK4/6.
 
-## Architecture
 
-```
-                    ┌─────────────────────────────────────────┐
-                    │           ProteinSynergyDock             │
-                    └─────────────────────────────────────────┘
-
-Drug A SMILES ──→ RDKit 3D ──→ GATv2 Encoder ──┐
-                                                 ├──→ Cross-Drug Attention ──┐
-Drug B SMILES ──→ RDKit 3D ──→ GATv2 Encoder ──┘                           │
-                                                                             ▼
-Protein Sequence ──→ ESM-2 ──→ ProteinWhisper++ ──→ GO Embedding ──→ FiLM Conditioning
-                                                                             │
-AutoDock Vina ──→ Drug A score (kcal/mol) ──────────────────────────────────┤
-               └→ Drug B score (kcal/mol) ──────────────────────────────────┤
-                                                                             ▼
-                                                                    Synergy Score
-                                                                  (Loewe regression)
-```
 ## Examples to try
 
 | Drug A | Drug B | PDB ID | Expected result |
