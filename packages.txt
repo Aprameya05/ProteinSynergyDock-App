@@ -1,4 +1,6 @@
 libxrender1 
 libxext6 
 openbabel 
+autodock-vina 
+swig 
 libboost-all-dev 
