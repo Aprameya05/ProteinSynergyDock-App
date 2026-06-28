@@ -296,17 +296,7 @@ def run_vina_docking(receptor_pdbqt, ligand_pdbqt, center, size, out_path, exhau
                         except: pass
         return best_score, out_path
     except Exception as e:
-        v = Vina(sf_name='vina', verbosity=0)
-        v.set_receptor(receptor_pdbqt)
-        v.set_ligand_from_file(ligand_pdbqt)
-        v.compute_vina_maps(center=center, box_size=size)
-        v.dock(exhaustiveness=exhaustiveness, n_poses=3)
-        v.write_poses(out_path, n_poses=3, overwrite=True)
-        energies = v.energies(n_poses=3)
-        best_score = float(energies[0][0])
-        return best_score, out_path
-    except Exception as e:
-        return None, str(e)
+         return None, str(e)
 
 def read_pdbqt_molblock(pdbqt_path):
     """Read first pose from PDBQT file as atom coords."""
