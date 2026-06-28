@@ -514,7 +514,6 @@ with col2:
 # ── Full pipeline on button click ─────────────────────────────────────────────
 
 if run_btn:
-    if run_btn:
     # Debug: check what's available
     import shutil
     vina_found = shutil.which('vina') or shutil.which('autodock_vina') or shutil.which('vina_1.2.6_linux_x86_64')
