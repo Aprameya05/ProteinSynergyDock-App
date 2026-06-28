@@ -12,6 +12,8 @@
 
 ---
 ![Architecture](architecture.png)
+*Architecture.*
+
 ## The problem
 
 Drug combination screening is expensive. Labs test thousands of pairs in cell cultures to find which ones actually synergize. Most computational tools try to shortcut this by predicting synergy from SMILES strings alone — essentially treating molecules as text.
