@@ -269,8 +269,7 @@ def read_pose_atoms(pdbqt_path):
 def show_docking_3d(pdb_content, atoms_a, atoms_b, name_a, name_b, height=500):
     viewer = py3Dmol.view(width=750, height=height)
     viewer.addModel(pdb_content, 'pdb')
-    viewer.setStyle({'model': 0}, {'cartoon': {'color': 'spectrum', 'opacity': 0.6}})
-    viewer.addSurface(py3Dmol.SAS, {'opacity': 0.08, 'color': 'white'}, {'model': 0})
+    viewer.setStyle({'model': 0}, {'cartoon': {'color': 'spectrum', 'opacity': 0.85}})
 
     if atoms_a:
         block = "MODEL 1\n"
@@ -457,9 +456,6 @@ if run_btn:
                 if lig_a:
                     out_a = os.path.join(work_dir, "drug_a_out.pdbqt")
                     score_a, stdout_a, stderr_a = run_vina(vina_cmd, receptor, lig_a, center, size, out_a, exhaustiveness)
-                    with status:
-                        st.write(f"Vina stdout: {stdout_a[:300]}")
-                        st.write(f"Vina stderr: {stderr_a[:200]}")
                     if score_a is not None:
                         dock_score_a = score_a
                         pose_atoms_a = read_pose_atoms(out_a)
