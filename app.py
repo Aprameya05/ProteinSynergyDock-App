@@ -440,8 +440,6 @@ if run_btn:
         docking_ran  = False
 
         if vina_cmd and obabel_cmd:
-            with status: st.write(f"⚙️ Tools: vina={vina_cmd} obabel={obabel_cmd}")
-
             # Receptor
             with status: st.write("⚙️ Preparing receptor...")
             receptor = prepare_receptor(pdb_path, work_dir, obabel_cmd)
