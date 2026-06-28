@@ -259,9 +259,43 @@ def prepare_receptor_pdbqt(pdb_path, work_dir):
     return None
 
 def run_vina_docking(receptor_pdbqt, ligand_pdbqt, center, size, out_path, exhaustiveness=8):
-    """Run AutoDock Vina and return best score + pose."""
+    """Run AutoDock Vina binary via subprocess."""
     try:
-        from vina import Vina
+        vina_cmd = None
+        for cmd in ['vina', 'autodock_vina', '/usr/bin/vina']:
+            r = subprocess.run([cmd, '--version'], capture_output=True)
+            if r.returncode == 0:
+                vina_cmd = cmd
+                break
+        if vina_cmd is None:
+            return None, "vina not found"
+        result = subprocess.run([
+            vina_cmd,
+            '--receptor', receptor_pdbqt,
+            '--ligand', ligand_pdbqt,
+            '--out', out_path,
+            '--center_x', str(round(center[0],3)),
+            '--center_y', str(round(center[1],3)),
+            '--center_z', str(round(center[2],3)),
+            '--size_x', str(round(size[0],3)),
+            '--size_y', str(round(size[1],3)),
+            '--size_z', str(round(size[2],3)),
+            '--exhaustiveness', str(exhaustiveness),
+            '--num_modes', '3',
+        ], capture_output=True, text=True, timeout=300)
+        best_score = None
+        for line in result.stdout.split('\n'):
+            if line.strip().startswith('1 '):
+                try: best_score = float(line.split()[1]); break
+                except: pass
+        if best_score is None and os.path.exists(out_path):
+            with open(out_path) as f:
+                for line in f:
+                    if 'REMARK VINA RESULT' in line:
+                        try: best_score = float(line.split()[3]); break
+                        except: pass
+        return best_score, out_path
+    except Exception as e:
         v = Vina(sf_name='vina', verbosity=0)
         v.set_receptor(receptor_pdbqt)
         v.set_ligand_from_file(ligand_pdbqt)
