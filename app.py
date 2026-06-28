@@ -199,7 +199,18 @@ def prepare_receptor(pdb_path, work_dir, obabel):
     pdb_id = os.path.basename(pdb_path).replace('.pdb', '')
     pdbqt  = os.path.join(work_dir, f"{pdb_id}_rec.pdbqt")
     if os.path.exists(pdbqt) and os.path.getsize(pdbqt) > 0: return pdbqt
-    subprocess.run([obabel, pdb_path, '-O', pdbqt, '--partialcharge', 'gasteiger'], capture_output=True)
+
+    # Clean PDB first - keep only ATOM records (remove HETATM, waters)
+    clean_pdb = os.path.join(work_dir, f"{pdb_id}_clean.pdb")
+    with open(pdb_path) as fin, open(clean_pdb, 'w') as fout:
+        for line in fin:
+            if line.startswith('ATOM') or line.startswith('END'):
+                fout.write(line)
+
+    # Convert cleaned PDB to PDBQT
+    subprocess.run([obabel, clean_pdb, '-O', pdbqt,
+                    '--partialcharge', 'gasteiger', '-xr'],
+                   capture_output=True)
     return pdbqt if os.path.exists(pdbqt) and os.path.getsize(pdbqt) > 0 else None
 
 def run_vina(vina, receptor, ligand, center, size, out_path, exhaustiveness=8):
