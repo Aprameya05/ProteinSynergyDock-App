@@ -476,7 +476,7 @@ with st.sidebar:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3 = st.tabs(["🔬 Predict Synergy", "🗺️ Synergy Landscape", "📊 Cell Line Comparison"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔬 Predict Synergy", "🗺️ Synergy Landscape", "📊 Cell Line Comparison", "🏥 Clinical Trials", "📚 Literature"])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1: Predict Synergy
@@ -839,3 +839,149 @@ with tab3:
                 'Verdict': [get_verdict(s)[0] for s in radar_scores],
             }).sort_values('Synergy Score',ascending=False).reset_index(drop=True)
             st.dataframe(summary, use_container_width=True, hide_index=True)
+            # ═══════════════════════════════════════════════════════════════════════════════
+# TAB 4: Clinical Trial Matching
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab4:
+    st.markdown("### 🏥 Clinical Trial Matching")
+    st.caption("Search ClinicalTrials.gov for active trials testing your drug combination.")
+
+    col_ct1, col_ct2 = st.columns(2)
+    with col_ct1:
+        ct_drug_a = st.text_input("Drug A name", placeholder="e.g. Vemurafenib", key="ct_a")
+    with col_ct2:
+        ct_drug_b = st.text_input("Drug B name", placeholder="e.g. Trametinib", key="ct_b")
+
+    ct_condition = st.text_input("Cancer type (optional)", placeholder="e.g. melanoma, lung cancer", key="ct_cond")
+    search_trials_btn = st.button("🔍 Search Clinical Trials", key="ct_btn")
+
+    if search_trials_btn and ct_drug_a and ct_drug_b:
+        with st.spinner("Searching ClinicalTrials.gov..."):
+            try:
+                query = f"{ct_drug_a} {ct_drug_b}"
+                if ct_condition: query += f" {ct_condition}"
+                
+                url = "https://clinicaltrials.gov/api/v2/studies"
+                params = {
+                    "query.term": query,
+                    "filter.overallStatus": "RECRUITING,ACTIVE_NOT_RECRUITING,COMPLETED",
+                    "pageSize": 15,
+                    "format": "json",
+                    "fields": "NCTId,BriefTitle,OverallStatus,Phase,StartDate,CompletionDate,LeadSponsorName,Condition,InterventionName"
+                }
+                resp = requests.get(url, params=params, timeout=15)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    studies = data.get('studies', [])
+                    
+                    if not studies:
+                        st.info(f"No clinical trials found for {ct_drug_a} + {ct_drug_b}. Try different drug names or broader search terms.")
+                    else:
+                        st.success(f"Found {len(studies)} clinical trials for **{ct_drug_a} + {ct_drug_b}**")
+                        
+                        for study in studies:
+                            proto = study.get('protocolSection', {})
+                            id_mod    = proto.get('identificationModule', {})
+                            status_mod = proto.get('statusModule', {})
+                            design_mod = proto.get('designModule', {})
+                            sponsor_mod = proto.get('sponsorCollaboratorsModule', {})
+                            cond_mod  = proto.get('conditionsModule', {})
+                            
+                            nct_id    = id_mod.get('nctId', 'N/A')
+                            title     = id_mod.get('briefTitle', 'No title')
+                            status    = status_mod.get('overallStatus', 'Unknown')
+                            phase     = design_mod.get('phases', ['N/A'])
+                            phase_str = ', '.join(phase) if isinstance(phase, list) else str(phase)
+                            sponsor   = sponsor_mod.get('leadSponsor', {}).get('name', 'Unknown')
+                            conditions = cond_mod.get('conditions', [])
+                            
+                            status_color = {
+                                'RECRUITING': '🟢',
+                                'ACTIVE_NOT_RECRUITING': '🟡',
+                                'COMPLETED': '⚫',
+                            }.get(status, '⚪')
+
+                            with st.expander(f"{status_color} {title[:80]}..."):
+                                c1, c2, c3 = st.columns(3)
+                                c1.metric("NCT ID", nct_id)
+                                c2.metric("Status", status.replace('_',' ').title())
+                                c3.metric("Phase", phase_str)
+                                st.markdown(f"**Sponsor:** {sponsor}")
+                                if conditions:
+                                    st.markdown(f"**Conditions:** {', '.join(conditions[:5])}")
+                                st.markdown(f"[View on ClinicalTrials.gov](https://clinicaltrials.gov/study/{nct_id})")
+                else:
+                    st.error(f"ClinicalTrials.gov API error: {resp.status_code}")
+            except Exception as e:
+                st.error(f"Error searching trials: {e}")
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 5: Literature Mining
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab5:
+    st.markdown("### 📚 Literature Mining")
+    st.caption("Search PubMed for papers about your drug combination.")
+
+    col_pub1, col_pub2 = st.columns(2)
+    with col_pub1:
+        pub_drug_a = st.text_input("Drug A", placeholder="e.g. Vemurafenib", key="pub_a")
+    with col_pub2:
+        pub_drug_b = st.text_input("Drug B", placeholder="e.g. Trametinib", key="pub_b")
+
+    pub_topic = st.text_input("Additional topic (optional)", placeholder="e.g. synergy, resistance, melanoma", key="pub_topic")
+    pub_btn   = st.button("🔍 Search PubMed", key="pub_btn")
+
+    if pub_btn and pub_drug_a and pub_drug_b:
+        with st.spinner("Searching PubMed..."):
+            try:
+                # Search PubMed
+                query = f"{pub_drug_a} AND {pub_drug_b}"
+                if pub_topic: query += f" AND {pub_topic}"
+
+                search_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
+                search_params = {
+                    "db": "pubmed", "term": query,
+                    "retmax": 15, "retmode": "json",
+                    "sort": "relevance"
+                }
+                search_resp = requests.get(search_url, params=search_params, timeout=15)
+                pmids = search_resp.json().get('esearchresult', {}).get('idlist', [])
+
+                if not pmids:
+                    st.info(f"No papers found for {pub_drug_a} + {pub_drug_b}. Try broader terms.")
+                else:
+                    # Fetch details
+                    fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+                    fetch_params = {
+                        "db": "pubmed",
+                        "id": ",".join(pmids),
+                        "retmode": "json"
+                    }
+                    fetch_resp = requests.get(fetch_url, params=fetch_params, timeout=15)
+                    results    = fetch_resp.json().get('result', {})
+
+                    total = results.get('uids', pmids)
+                    st.success(f"Found **{len(total)} papers** for **{pub_drug_a} + {pub_drug_b}**")
+
+                    for pmid in total:
+                        if pmid == 'uids': continue
+                        paper = results.get(pmid, {})
+                        title   = paper.get('title', 'No title')
+                        journal = paper.get('fulljournalname', paper.get('source', 'Unknown'))
+                        pubdate = paper.get('pubdate', 'Unknown date')
+                        authors = paper.get('authors', [])
+                        author_str = authors[0].get('name','') + ' et al.' if authors else 'Unknown'
+
+                        with st.expander(f"📄 {title[:80]}..."):
+                            c1,c2,c3 = st.columns(3)
+                            c1.metric("Journal", journal[:30])
+                            c2.metric("Date", pubdate)
+                            c3.metric("PMID", pmid)
+                            st.markdown(f"**Authors:** {author_str}")
+                            st.markdown(f"[Read on PubMed](https://pubmed.ncbi.nlm.nih.gov/{pmid}/)")
+
+            except Exception as e:
+                st.error(f"Error searching PubMed: {e}")
