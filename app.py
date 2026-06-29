@@ -608,9 +608,9 @@ if run_btn:
         st.markdown("---")
         st.markdown("### 📊 Results")
 
-        if synergy_score > 4.0:    verdict,color="✅ Strongly Synergistic","green"
-        elif synergy_score > 2.0:  verdict,color="⚠️ Mildly Synergistic","orange"
-        elif synergy_score > -1.0: verdict,color="➖ Approximately Additive","blue"
+        if synergy_score > 1.0:    verdict,color="✅ Strongly Synergistic","green"
+        elif synergy_score > 0.0:  verdict,color="⚠️ Mildly Synergistic","orange"
+        elif synergy_score > -2.0: verdict,color="➖ Approximately Additive","blue"
         else:                      verdict,color="❌ Antagonistic","red"
 
         m1,m2,m3,m4 = st.columns(4)
