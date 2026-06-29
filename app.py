@@ -1,11 +1,5 @@
 """
-ProteinSynergyDock v4 — Full Pipeline with Cell Line Context
-============================================================
-Improvements over v3:
-- Cell line selector (60 cancer types)
-- NCI ALMANAC known synergy lookup
-- Better binding pocket detection using HETATM ligand coords
-- Synergy denormalization for interpretable output
+ProteinSynergyDock v5 — Full Pipeline with Cell Line Context
 """
 
 import streamlit as st
@@ -36,11 +30,11 @@ st.markdown("""
     .known-score { background:#1e3a1e; border-left:4px solid #4caf50;
                padding:12px; border-radius:6px; margin:8px 0; color:white; }
     .unknown-score { background:#2a2a1e; border-left:4px solid #ff9800;
-                     padding:12px; border-radius:6px; margin:8px 0; }
+                     padding:12px; border-radius:6px; margin:8px 0; color:white; }
+    .history-item { background:#1a1a2e; border-left:3px solid #4fc3f7;
+                    padding:8px; border-radius:4px; margin:4px 0; color:white; font-size:12px; }
 </style>
 """, unsafe_allow_html=True)
-
-# ── Model ─────────────────────────────────────────────────────────────────────
 
 class DrugEncoder(nn.Module):
     def __init__(self, in_dim=7, hidden=128, out_dim=256, heads=4):
@@ -90,7 +84,6 @@ class ProteinSynergyDockV2(nn.Module):
         out   = self.head(fused)
         return out[:,0], out[:,1]
 
-# V1 model (no cell line) for fallback
 class ProteinSynergyDockV1(nn.Module):
     def __init__(self, go_dim=512, drug_dim=256, hidden=512):
         super().__init__()
@@ -114,60 +107,91 @@ class ProteinSynergyDockV1(nn.Module):
 def load_model():
     ckpt_path = 'proteinsydock_v2_final.pt'
     if not os.path.exists(ckpt_path):
-        return None, None, None, 'none'
-
+        return None, None, None, 'none', 0.0, 0.0
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     sd   = ckpt['state_dict']
-
-    # Detect v2 (has cell_embed) vs v1
     if any('cell_embed' in k for k in sd.keys()):
         n_cell = ckpt.get('n_cell_lines', 60)
         model  = ProteinSynergyDockV2(n_cell_lines=n_cell)
         model.load_state_dict(sd)
         model.eval()
-        cell_to_idx = ckpt.get('cell_line_to_idx', {})
-        syn_mean    = ckpt.get('synergy_mean', -2.58)
-        syn_std     = ckpt.get('synergy_std',   6.06)
-        return model, cell_to_idx, (syn_mean, syn_std), 'v2'
+        return model, ckpt.get('cell_line_to_idx',{}), \
+               (ckpt.get('synergy_mean',-2.58), ckpt.get('synergy_std',6.06)), \
+               'v2', ckpt.get('pearson_r',0.0), ckpt.get('auroc',0.0)
     else:
         model = ProteinSynergyDockV1()
         model.load_state_dict(sd)
         model.eval()
-        return model, None, None, 'v1'
+        return model, None, None, 'v1', ckpt.get('pearson_r',0.0), ckpt.get('auroc',0.0)
 
-model, cell_to_idx, syn_scale, model_version = load_model()
+model, cell_to_idx, syn_scale, model_version, model_r, model_auroc = load_model()
 
-# ── Known synergy lookup (NCI ALMANAC subset) ─────────────────────────────────
+if 'history' not in st.session_state:
+    st.session_state.history = []
 
 KNOWN_SYNERGY = {
-    # Format: (Drug A, Drug B): {cell_line: score}
-    # Populated from NCI ALMANAC — top known pairs
-    ("Vemurafenib","Trametinib"):   {"UACC-62": 8.4, "SK-MEL-5": 7.2, "A375": 9.1},
-    ("Trametinib","Vemurafenib"):   {"UACC-62": 8.4, "SK-MEL-5": 7.2, "A375": 9.1},
-    ("Imatinib","Dasatinib"):       {"K-562": -1.4, "MOLT-4": -0.8},
-    ("Dasatinib","Imatinib"):       {"K-562": -1.4, "MOLT-4": -0.8},
-    ("Erlotinib","Lapatinib"):      {"A549/ATCC": 5.5, "NCI-H23": 4.2},
-    ("Lapatinib","Erlotinib"):      {"A549/ATCC": 5.5, "NCI-H23": 4.2},
-    ("Olaparib","Rucaparib"):       {"OVCAR-3": 2.1, "SK-OV-3": 1.8},
-    ("Rucaparib","Olaparib"):       {"OVCAR-3": 2.1, "SK-OV-3": 1.8},
-    ("Palbociclib","Abemaciclib"):  {"MCF7": 3.2, "T-47D": 2.8},
-    ("Abemaciclib","Palbociclib"):  {"MCF7": 3.2, "T-47D": 2.8},
-    ("Vemurafenib","Cobimetinib"):  {"UACC-62": 6.8, "SK-MEL-5": 5.9},
-    ("Cobimetinib","Vemurafenib"):  {"UACC-62": 6.8, "SK-MEL-5": 5.9},
+    ("Vemurafenib","Trametinib"):  {"UACC-62":8.4,"SK-MEL-5":7.2,"A375":9.1},
+    ("Trametinib","Vemurafenib"):  {"UACC-62":8.4,"SK-MEL-5":7.2,"A375":9.1},
+    ("Imatinib","Dasatinib"):      {"K-562":-1.4,"MOLT-4":-0.8},
+    ("Dasatinib","Imatinib"):      {"K-562":-1.4,"MOLT-4":-0.8},
+    ("Erlotinib","Lapatinib"):     {"A549/ATCC":5.5,"NCI-H23":4.2},
+    ("Lapatinib","Erlotinib"):     {"A549/ATCC":5.5,"NCI-H23":4.2},
+    ("Olaparib","Rucaparib"):      {"OVCAR-3":2.1,"SK-OV-3":1.8},
+    ("Rucaparib","Olaparib"):      {"OVCAR-3":2.1,"SK-OV-3":1.8},
+    ("Palbociclib","Abemaciclib"): {"MCF7":3.2,"T-47D":2.8},
+    ("Abemaciclib","Palbociclib"): {"MCF7":3.2,"T-47D":2.8},
+    ("Vemurafenib","Cobimetinib"): {"UACC-62":6.8,"SK-MEL-5":5.9},
+    ("Cobimetinib","Vemurafenib"): {"UACC-62":6.8,"SK-MEL-5":5.9},
 }
 
 def lookup_known_synergy(drug_a, drug_b, cell_line=None):
     key = (drug_a, drug_b)
-    if key not in KNOWN_SYNERGY:
-        return None
+    if key not in KNOWN_SYNERGY: return None
     scores = KNOWN_SYNERGY[key]
     if cell_line and cell_line in scores:
         return scores[cell_line], cell_line
-    # Return average
     avg = np.mean(list(scores.values()))
     return avg, f"avg across {len(scores)} cell lines"
 
-# ── Cancer panels and cell lines ──────────────────────────────────────────────
+DRUG_SMILES_LOOKUP = {
+    "Imatinib":      "CC1=C(C=C(C=C1)NC(=O)C2=CC=C(C=C2)CN3CCN(CC3)C)NC4=NC=CC(=N4)C5=CN=CC=C5",
+    "Gefitinib":     "COC1=C(C=C2C(=C1)N=CN=C2NC3=CC(=C(C=C3)F)Cl)OCCCN4CCOCC4",
+    "Erlotinib":     "COCCOC1=C(C=C2C(=C1)C(=NC=N2)NC3=CC=CC(=C3)C#C)OCCOC",
+    "Lapatinib":     "CS(=O)(=O)CCNCc1oc(cc1)c2ccc3ncnc(Nc4ccc(Oc5cccc(Cl)c5)c(Cl)c4)c3c2",
+    "Dasatinib":     "Cc1nc(Nc2ncc(s2)C(=O)Nc2c(C)cccc2Cl)cc(n1)N1CCN(CCO)CC1",
+    "Nilotinib":     "Cc1cn(c2cc(NC(=O)c3ccc(C)c(Nc4nccc(n4)-c4cccnc4)c3)cc(C(F)(F)F)c12)C",
+    "Vemurafenib":   "CCCS(=O)(=O)Nc1ccc(F)c(C(=O)c2c[nH]c3ncc(-c4ccc(Cl)cc4)cc23)c1",
+    "Dabrafenib":    "CC(C)(C)c1nc2cc(F)ccc2c(C(=O)Nc2ccc(F)c(NS(=O)(=O)c3ccc(F)cc3)c2)n1",
+    "Trametinib":    "CC(=O)Nc1ccc(-c2cc3c(nc(N)nc3n2C)N2CCC(F)(F)CC2=O)cc1F",
+    "Cobimetinib":   "OC(COc1cc(Cl)c(F)cc1F)CN1CCC(=C1)c1cc2c(Nc3ccc(F)cc3F)ncc(C(N)=O)c2[nH]1",
+    "Sorafenib":     "CNC(=O)c1cc(Oc2ccc(NC(=O)Nc3ccc(Cl)c(C(F)(F)F)c3)cc2)ccn1",
+    "Sunitinib":     "CCN(CC)CCNC(=O)c1c(C)[nH]c(C=C2C(=O)Nc3ccc(F)cc32)c1C",
+    "Cabozantinib":  "COc1cc2nccc(Oc3ccc(NC(=O)C4(C(=O)Nc5ccc(F)cc5)CC4)cc3)c2cc1OC",
+    "Olaparib":      "O=C1CCCN1c1ccc(cc1)C(=O)c1[nH]ncc1C1CC1",
+    "Niraparib":     "OC(=O)c1ccc2[nH]ncc2c1-c1ccc(cn1)C1CCNCC1",
+    "Rucaparib":     "NCc1cc2cc(F)ccc2[nH]1-c1ccc3NCCCC(=O)c3c1",
+    "Palbociclib":   "CC1=C(C(=NC(=C1)N2CCNCC2)N3CCCC3)C(=O)NC4=CC=CC=N4",
+    "Abemaciclib":   "CC1=NC(=NC(=C1)NC2=NC=CC(=N2)N3CCC(CC3)NC(=O)C4=CC=C(C=C4)F)C5=CC(=CC=C5)F",
+    "Ribociclib":    "CC1=NC(=NC(=C1)N2CCNCC2)C3=CC4=C(C=C3)N=CN=C4N5CCCC5",
+    "Ibrutinib":     "C=CC(=O)N1CCCC(c2ncnc3[nH]ccc23)C1",
+    "Zanubrutinib":  "O=C(/C=C/c1ccco1)N1CCC(n2nc(-c3ccc4c(c3)CCNC4=O)c3c(N)ncnc23)CC1",
+    "Acalabrutinib": "CC#CC(=O)N1CCC(n2nc(-c3ccc4c(c3)CCNC4=O)c3c(N)ncnc23)CC1",
+    "Venetoclax":    "CC1(CCC(CC1)N2CCN(CC2)c3ccc(cc3)C(=O)NS(=O)(=O)c4ccc(cc4-c5cnc6ccccc6n5)Cl)C",
+    "Alpelisib":     "CC1(C)CN(c2nc(Nc3ccc(S(N)(=O)=O)cc3F)ncc2F)CC1=O",
+    "Paclitaxel":    "O=C(OC1C[C@]2(O)C(=O)C(OC(=O)c3ccccc3)C(O)C(OC(=O)C(NC(=O)c3ccccc3)c3ccccc3)C2(C)CC1)C(C)=C",
+    "Docetaxel":     "CC(C)(C)OC(=O)NC(c1ccccc1)C(O)C(=O)OC1CC2OCC2(OC(C)=O)C1OC(=O)c1ccccc1",
+    "Doxorubicin":   "COc1cccc2C(=O)c3c(O)c4CC(O)(CC(OC5CC(N)C(O)C(C)O5)c4c(O)c3C(=O)c12)C(=O)CO",
+    "Gemcitabine":   "NC(=O)C1=CN(C(=O)N1)C1CC(F)(F)C(CO)O1",
+    "Methotrexate":  "CN(c1ccc(cc1)C(=O)NC(CCC(=O)O)C(=O)O)c1nc(N)nc2ccc(CNC3=CC=CC=C3)cc12",
+    "Osimertinib":   "C=CC(=O)Nc1cc2c(Nc3ccc(F)c(Cl)c3)nc(OC)nc2cc1N(C)CCN(C)C",
+    "Alectinib":     "COc1cc2c(cc1N1CCC(CC1)c1ccc3[nH]ccc3c1)cc(=O)n1ccc(C#N)c21",
+    "Afatinib":      "CN(C)C/C=C/C(=O)Nc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OC",
+    "Capecitabine":  "CCOC(=O)Nc1nc(=O)n(C2OC(C)C(O)C2O)cc1F",
+    "Temozolomide":  "Cn1nnc2c(C(N)=O)ncn12",
+    "Selumetinib":   "Cc1cc(Nc2ncc(F)c(Nc3ccc(I)c(F)c3)n2)c(Cl)cc1Cl",
+    "Belinostat":    "O=C(/C=C/c1ccccc1)NOc1ccc(NS(=O)(=O)c2ccccc2)cc1",
+    "Vorinostat":    "O=C(CCCCCCC(=O)Nc1ccccc1)NO",
+}
 
 CANCER_PANELS = {
     "Melanoma":                   ["UACC-62","SK-MEL-5","SK-MEL-28","MALME-3M","M14","MDA-MB-435","UACC-257","LOX IMVI"],
@@ -180,8 +204,6 @@ CANCER_PANELS = {
     "Renal Cancer":               ["786-0","A498","ACHN","CAKI-1","RXF 393","SN12C","TK-10","UO-31"],
     "Prostate Cancer":            ["DU-145","PC-3"],
 }
-
-# ── Drug graph ────────────────────────────────────────────────────────────────
 
 def smiles_to_graph(smiles):
     mol = Chem.MolFromSmiles(smiles)
@@ -210,8 +232,6 @@ def smiles_to_graph(smiles):
                 pos=torch.tensor(pos, dtype=torch.float),
                 edge_index=torch.tensor([es,ed], dtype=torch.long))
 
-# ── PDB + pocket detection ────────────────────────────────────────────────────
-
 def fetch_pdb(pdb_id, save_dir):
     path = os.path.join(save_dir, f"{pdb_id}.pdb")
     if os.path.exists(path) and os.path.getsize(path) > 1000: return path
@@ -230,49 +250,27 @@ def get_protein_info(pdb_id):
     return f"Protein {pdb_id}"
 
 def get_binding_box(pdb_path, padding=10.0):
-    """
-    Smart binding box: use HETATM ligand coordinates if available,
-    otherwise fall back to protein geometric center.
-    """
-    hetatm_coords = []
-    atom_coords   = []
-
+    hetatm_coords, atom_coords = [], []
     with open(pdb_path) as f:
         for line in f:
             if line.startswith('HETATM'):
-                resname = line[17:20].strip()
-                if resname not in ['HOH','WAT','H2O']:  # skip water
-                    try:
-                        hetatm_coords.append([float(line[30:38]),
-                                              float(line[38:46]),
-                                              float(line[46:54])])
+                if line[17:20].strip() not in ['HOH','WAT','H2O']:
+                    try: hetatm_coords.append([float(line[30:38]),float(line[38:46]),float(line[46:54])])
                     except: pass
             elif line.startswith('ATOM'):
-                try:
-                    atom_coords.append([float(line[30:38]),
-                                        float(line[38:46]),
-                                        float(line[46:54])])
+                try: atom_coords.append([float(line[30:38]),float(line[38:46]),float(line[46:54])])
                 except: pass
-
-    # Use ligand coords if we have them (much better pocket detection)
     if len(hetatm_coords) >= 5:
         coords = np.array(hetatm_coords)
         center = coords.mean(axis=0).tolist()
-        # Box size based on ligand spread + padding
-        spread = coords.max(axis=0) - coords.min(axis=0)
-        size   = np.clip(spread + padding*2, 18, 30).tolist()
+        size   = np.clip(coords.max(axis=0)-coords.min(axis=0)+padding*2, 18, 30).tolist()
         return center, size, "ligand"
-
-    # Fallback to protein center
     if atom_coords:
         coords = np.array(atom_coords)
         center = coords.mean(axis=0).tolist()
         size   = np.clip(coords.max(axis=0)-coords.min(axis=0)+padding, 20, 28).tolist()
         return center, size, "protein_center"
-
     return [0,0,0], [25,25,25], "default"
-
-# ── Docking ───────────────────────────────────────────────────────────────────
 
 def find_vina():
     for cmd in ['vina','autodock_vina','/usr/bin/vina','/usr/local/bin/vina']:
@@ -285,25 +283,22 @@ def prepare_ligand(smiles, name, work_dir):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None: return None
     try:
-        mol = Chem.AddHs(mol)
-        AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
-        AllChem.MMFFOptimizeMolecule(mol)
-        mol = Chem.RemoveHs(mol)
+        mol=Chem.AddHs(mol); AllChem.EmbedMolecule(mol,AllChem.ETKDGv3())
+        AllChem.MMFFOptimizeMolecule(mol); mol=Chem.RemoveHs(mol)
     except:
         try: AllChem.Compute2DCoords(mol)
         except: return None
-    sdf = f'{work_dir}/{name}.sdf'
-    pdb = f'{work_dir}/{name}.pdb'
-    w = Chem.SDWriter(sdf); w.write(mol); w.close()
+    sdf=f'{work_dir}/{name}.sdf'; pdb=f'{work_dir}/{name}.pdb'
+    w=Chem.SDWriter(sdf); w.write(mol); w.close()
     subprocess.run(['obabel',sdf,'-O',pdb,'-h'], capture_output=True)
     subprocess.run(['obabel',pdb,'-O',out,'--partialcharge','gasteiger'], capture_output=True)
     return out if os.path.exists(out) and os.path.getsize(out)>0 else None
 
 def prepare_receptor(pdb_path, work_dir):
-    pdb_id = os.path.basename(pdb_path).replace('.pdb','')
-    out    = f'{work_dir}/{pdb_id}_rec.pdbqt'
+    pdb_id=os.path.basename(pdb_path).replace('.pdb','')
+    out=f'{work_dir}/{pdb_id}_rec.pdbqt'
     if os.path.exists(out) and os.path.getsize(out)>0: return out
-    clean = f'{work_dir}/{pdb_id}_clean.pdb'
+    clean=f'{work_dir}/{pdb_id}_clean.pdb'
     with open(pdb_path) as fin, open(clean,'w') as fout:
         for line in fin:
             if line.startswith('ATOM') or line.startswith('END'): fout.write(line)
@@ -311,82 +306,72 @@ def prepare_receptor(pdb_path, work_dir):
     return out if os.path.exists(out) and os.path.getsize(out)>0 else None
 
 def run_vina(vina, receptor, ligand, center, size, out_path, exhaustiveness=8):
-    cmd = [vina,'--receptor',receptor,'--ligand',ligand,'--out',out_path,
-           '--center_x',str(round(center[0],3)),
-           '--center_y',str(round(center[1],3)),
-           '--center_z',str(round(center[2],3)),
-           '--size_x',str(round(size[0],3)),
-           '--size_y',str(round(size[1],3)),
-           '--size_z',str(round(size[2],3)),
-           '--exhaustiveness',str(exhaustiveness),'--num_modes','3']
+    cmd=[vina,'--receptor',receptor,'--ligand',ligand,'--out',out_path,
+         '--center_x',str(round(center[0],3)),'--center_y',str(round(center[1],3)),
+         '--center_z',str(round(center[2],3)),'--size_x',str(round(size[0],3)),
+         '--size_y',str(round(size[1],3)),'--size_z',str(round(size[2],3)),
+         '--exhaustiveness',str(exhaustiveness),'--num_modes','3']
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-        best_score = None
+        result=subprocess.run(cmd,capture_output=True,text=True,timeout=300)
+        best_score=None
         if os.path.exists(out_path):
             with open(out_path) as f:
                 for line in f:
                     if 'REMARK VINA RESULT' in line:
-                        try: best_score = float(line.split()[3]); break
+                        try: best_score=float(line.split()[3]); break
                         except: pass
         if best_score is None:
             for line in result.stdout.split('\n'):
-                s = line.strip()
+                s=line.strip()
                 if s and s[0]=='1' and len(s.split())>=3:
-                    try: best_score = float(s.split()[1]); break
+                    try: best_score=float(s.split()[1]); break
                     except: pass
         return best_score, result.stderr
     except Exception as e: return None, str(e)
 
 def read_pose_atoms(pdbqt_path):
-    atoms = []
+    atoms=[]
     if not os.path.exists(pdbqt_path): return None
     with open(pdbqt_path) as f:
         for line in f:
             if line.startswith('ENDMDL'): break
             if line.startswith(('ATOM','HETATM')):
-                try: atoms.append((line[12:16].strip(),
-                                   float(line[30:38]),
-                                   float(line[38:46]),
-                                   float(line[46:54])))
+                try: atoms.append((line[12:16].strip(),float(line[30:38]),
+                                   float(line[38:46]),float(line[46:54])))
                 except: pass
     return atoms or None
 
-# ── 3D Viewer ─────────────────────────────────────────────────────────────────
-
 def show_docking_3d(pdb_content, atoms_a, atoms_b, name_a, name_b, height=500):
-    viewer = py3Dmol.view(width=750, height=height)
-    viewer.addModel(pdb_content, 'pdb')
-    viewer.setStyle({'model':0}, {'cartoon':{'color':'spectrum','opacity':0.65}})
-
+    viewer=py3Dmol.view(width=750,height=height)
+    viewer.addModel(pdb_content,'pdb')
+    viewer.setStyle({'model':0},{'cartoon':{'color':'spectrum','opacity':0.65}})
     if atoms_a:
-        block = "MODEL 1\n"
+        block="MODEL 1\n"
         for i,(a,x,y,z) in enumerate(atoms_a):
-            block += f"HETATM{i+1:5d}  {a:<4s}LGA A   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
-        block += "ENDMDL\n"
+            block+=f"HETATM{i+1:5d}  {a:<4s}LGA A   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+        block+="ENDMDL\n"
         viewer.addModel(block,'pdb')
         viewer.setStyle({'model':1},{'stick':{'colorscheme':'cyanCarbon','radius':0.2},
                                      'sphere':{'colorscheme':'cyanCarbon','scale':0.3}})
-
     if atoms_b:
-        block = "MODEL 1\n"
+        block="MODEL 1\n"
         for i,(a,x,y,z) in enumerate(atoms_b):
-            block += f"HETATM{i+1:5d}  {a:<4s}LGB B   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
-        block += "ENDMDL\n"
+            block+=f"HETATM{i+1:5d}  {a:<4s}LGB B   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+        block+="ENDMDL\n"
         viewer.addModel(block,'pdb')
-        idx = 2 if atoms_a else 1
+        idx=2 if atoms_a else 1
         viewer.setStyle({'model':idx},{'stick':{'colorscheme':'orangeCarbon','radius':0.2},
                                        'sphere':{'colorscheme':'orangeCarbon','scale':0.3}})
-
     viewer.setBackgroundColor('#1a1a2e')
     viewer.zoomTo({'model':1} if atoms_a else {})
     viewer.zoom(1.3)
-    components.html(viewer._make_html(), height=height+20, scrolling=False)
+    components.html(viewer._make_html(),height=height+20,scrolling=False)
 
 def show_drugs_3d(smiles_a, smiles_b, height=400):
-    viewer = py3Dmol.view(width=750, height=height)
-    offset = 0
+    viewer=py3Dmol.view(width=750,height=height)
+    offset=0
     for i,(smiles,color) in enumerate([(smiles_a,'cyanCarbon'),(smiles_b,'orangeCarbon')]):
-        mol = Chem.MolFromSmiles(smiles) if smiles else None
+        mol=Chem.MolFromSmiles(smiles) if smiles else None
         if mol is None: continue
         try:
             mol=Chem.AddHs(mol); AllChem.EmbedMolecule(mol,AllChem.ETKDGv3())
@@ -397,13 +382,11 @@ def show_drugs_3d(smiles_a, smiles_b, height=400):
             viewer.addModel(Chem.MolToMolBlock(mol),'sdf')
             viewer.setStyle({'model':i},{'stick':{'colorscheme':color,'radius':0.15},
                                          'sphere':{'colorscheme':color,'scale':0.3}})
-            offset += 15
+            offset+=15
         except: pass
     viewer.setBackgroundColor('#1a1a2e')
     viewer.zoomTo()
-    components.html(viewer._make_html(), height=height+20, scrolling=False)
-
-# ── Showcases ─────────────────────────────────────────────────────────────────
+    components.html(viewer._make_html(),height=height+20,scrolling=False)
 
 SHOWCASES = {
     "Custom input": {"smiles_a":"","smiles_b":"","pdb_id":"","name_a":"","name_b":"",
@@ -434,8 +417,6 @@ SHOWCASES = {
         "note":"Complementary PARP1 inhibition. Known synergy: **2.1**"},
 }
 
-# ── Main UI ───────────────────────────────────────────────────────────────────
-
 st.markdown("""
 <div class="main-header">
     <h1>🧬 ProteinSynergyDock</h1>
@@ -455,6 +436,8 @@ with st.sidebar:
     st.markdown(f"""
 ## 📊 Model Info
 - **Version:** {model_version.upper() if model_version != 'none' else 'Not loaded'}
+- **Pearson r:** {model_r:.4f}
+- **AUROC:** {model_auroc:.4f}
 - **Real docking:** AutoDock Vina
 - **Training data:** 107,103 NCI ALMANAC scores
 - **Cell lines:** 60 cancer types
@@ -465,14 +448,40 @@ with st.sidebar:
 - [DrugSynergy3D](https://github.com/Aprameya05/DrugSynergy3D)
     """)
 
+    if st.session_state.history:
+        st.markdown("---")
+        st.markdown("## 📜 Recent Predictions")
+        for h in st.session_state.history:
+            verdict_icon = h['verdict'].split()[0]
+            st.markdown(f"""<div class="history-item">
+<b>{h['drug_a']} + {h['drug_b']}</b><br>
+{h['cell_line']} | Score: {h['score']:.2f} | {verdict_icon}
+</div>""", unsafe_allow_html=True)
+
 col1, col2 = st.columns([1, 1.2])
 
 with col1:
     st.markdown("### 💊 Drug Inputs")
-    name_a   = st.text_input("Drug A name", value=ex.get("name_a",""), placeholder="e.g. Imatinib")
-    smiles_a = st.text_area("Drug A — SMILES", value=ex["smiles_a"], height=80)
-    name_b   = st.text_input("Drug B name", value=ex.get("name_b",""), placeholder="e.g. Dasatinib")
-    smiles_b = st.text_area("Drug B — SMILES", value=ex["smiles_b"], height=80)
+
+    drug_a_options = ["Custom (paste SMILES below)"] + sorted(DRUG_SMILES_LOOKUP.keys())
+    drug_a_select  = st.selectbox("Drug A — select known drug", drug_a_options, key="da_select")
+    if drug_a_select != "Custom (paste SMILES below)":
+        smiles_a = DRUG_SMILES_LOOKUP[drug_a_select]
+        name_a   = drug_a_select
+        st.text_area("Drug A SMILES (auto-filled)", value=smiles_a, height=60, disabled=True)
+    else:
+        name_a   = st.text_input("Drug A name", value=ex.get("name_a",""), placeholder="e.g. Imatinib")
+        smiles_a = st.text_area("Drug A — SMILES", value=ex["smiles_a"], height=80)
+
+    drug_b_options = ["Custom (paste SMILES below)"] + sorted(DRUG_SMILES_LOOKUP.keys())
+    drug_b_select  = st.selectbox("Drug B — select known drug", drug_b_options, key="db_select")
+    if drug_b_select != "Custom (paste SMILES below)":
+        smiles_b = DRUG_SMILES_LOOKUP[drug_b_select]
+        name_b   = drug_b_select
+        st.text_area("Drug B SMILES (auto-filled)", value=smiles_b, height=60, disabled=True)
+    else:
+        name_b   = st.text_input("Drug B name", value=ex.get("name_b",""), placeholder="e.g. Dasatinib")
+        smiles_b = st.text_area("Drug B — SMILES", value=ex["smiles_b"], height=80)
 
     st.markdown("### 🧫 Target Protein")
     pdb_id = st.text_input("PDB ID (from rcsb.org)", value=ex.get("pdb_id",""),
@@ -486,8 +495,7 @@ with col1:
                          if ex.get("panel","Melanoma") in CANCER_PANELS else 0)
     cell_lines_for_panel = CANCER_PANELS[panel]
     default_cl = ex.get("cell_line", cell_lines_for_panel[0])
-    if default_cl not in cell_lines_for_panel:
-        default_cl = cell_lines_for_panel[0]
+    if default_cl not in cell_lines_for_panel: default_cl = cell_lines_for_panel[0]
     cell_line = st.selectbox("Cell line:", cell_lines_for_panel,
                               index=cell_lines_for_panel.index(default_cl))
 
@@ -503,24 +511,20 @@ with col2:
             show_drugs_3d(smiles_a, smiles_b)
             st.caption("🔵 Drug A &nbsp; 🟠 Drug B &nbsp; *Drag to rotate · Scroll to zoom*")
 
-# ── Pipeline ──────────────────────────────────────────────────────────────────
-
 if run_btn:
     if not smiles_a or not smiles_b:
         st.error("Please enter SMILES for both drugs"); st.stop()
     if not pdb_id:
         st.error("Please enter a PDB ID"); st.stop()
     if model is None:
-        st.error("Model not loaded — check checkpoint file"); st.stop()
+        st.error("Model not loaded"); st.stop()
 
     ga = smiles_to_graph(smiles_a)
     gb = smiles_to_graph(smiles_b)
     if ga is None: st.error("❌ Invalid SMILES for Drug A"); st.stop()
     if gb is None: st.error("❌ Invalid SMILES for Drug B"); st.stop()
 
-    # Check known synergy
-    known = lookup_known_synergy(name_a or "Drug A", name_b or "Drug B", cell_line)
-
+    known      = lookup_known_synergy(name_a or "Drug A", name_b or "Drug B", cell_line)
     vina_cmd   = find_vina()
     obabel_cmd = shutil.which('obabel')
 
@@ -530,8 +534,6 @@ if run_btn:
     status   = st.status("Starting...", expanded=True)
 
     with tempfile.TemporaryDirectory() as work_dir:
-
-        # Fetch PDB
         with status: st.write(f"📥 Fetching {pdb_id} from RCSB...")
         progress.progress(10)
         pdb_path = fetch_pdb(pdb_id, work_dir)
@@ -541,7 +543,7 @@ if run_btn:
         center, size, box_method = get_binding_box(pdb_path)
         with status:
             st.write(f"✅ {protein_name[:70]}")
-            st.write(f"📦 Binding box: {box_method} method | center: {[round(c,1) for c in center]}")
+            st.write(f"📦 Box: {box_method} | center: {[round(c,1) for c in center]}")
         progress.progress(20)
 
         dock_score_a = dock_score_b = -7.0
@@ -551,81 +553,65 @@ if run_btn:
         if vina_cmd and obabel_cmd:
             receptor = prepare_receptor(pdb_path, work_dir)
             progress.progress(30)
-
             if receptor:
                 with status: st.write("✅ Receptor ready")
-
-                # Dock Drug A
                 with status: st.write(f"🔬 Docking {name_a or 'Drug A'}...")
                 lig_a = prepare_ligand(smiles_a, "drug_a", work_dir)
                 if lig_a:
-                    out_a  = f'{work_dir}/drug_a_out.pdbqt'
-                    s_a, _ = run_vina(vina_cmd, receptor, lig_a, center, size, out_a, exhaustiveness)
+                    out_a=f'{work_dir}/drug_a_out.pdbqt'
+                    s_a,_=run_vina(vina_cmd,receptor,lig_a,center,size,out_a,exhaustiveness)
                     if s_a is not None:
-                        dock_score_a = s_a
-                        pose_atoms_a = read_pose_atoms(out_a)
-                        docking_ran  = True
+                        dock_score_a=s_a; pose_atoms_a=read_pose_atoms(out_a); docking_ran=True
                         with status: st.write(f"✅ {name_a or 'Drug A'}: {s_a:.2f} kcal/mol")
                 progress.progress(60)
-
-                # Dock Drug B
                 with status: st.write(f"🔬 Docking {name_b or 'Drug B'}...")
                 lig_b = prepare_ligand(smiles_b, "drug_b", work_dir)
                 if lig_b:
-                    out_b  = f'{work_dir}/drug_b_out.pdbqt'
-                    s_b, _ = run_vina(vina_cmd, receptor, lig_b, center, size, out_b, exhaustiveness)
+                    out_b=f'{work_dir}/drug_b_out.pdbqt'
+                    s_b,_=run_vina(vina_cmd,receptor,lig_b,center,size,out_b,exhaustiveness)
                     if s_b is not None:
-                        dock_score_b = s_b
-                        pose_atoms_b = read_pose_atoms(out_b)
-                        docking_ran  = True
+                        dock_score_b=s_b; pose_atoms_b=read_pose_atoms(out_b); docking_ran=True
                         with status: st.write(f"✅ {name_b or 'Drug B'}: {s_b:.2f} kcal/mol")
         else:
-            with status: st.write("⚠️ Docking tools unavailable — using default scores")
+            with status: st.write("⚠️ Docking tools unavailable")
         progress.progress(75)
 
-        # Synergy prediction
         with status: st.write("🧠 Predicting synergy...")
         go_emb = torch.zeros(512).unsqueeze(0)
         dock   = torch.tensor([[float(dock_score_a), float(dock_score_b)]])
 
         with torch.no_grad():
             if model_version == 'v2' and cell_to_idx:
-                cell_idx = torch.tensor([cell_to_idx.get(cell_line, 0)], dtype=torch.long)
-                score, logit = model(Batch.from_data_list([ga]),
-                                     Batch.from_data_list([gb]),
-                                     go_emb, dock, cell_idx)
-                # Denormalize
+                cell_idx = torch.tensor([cell_to_idx.get(cell_line,0)], dtype=torch.long)
+                score, logit = model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),
+                                     go_emb,dock,cell_idx)
                 syn_mean, syn_std = syn_scale
-                synergy_score = score.item() * syn_std + syn_mean
+                synergy_score = score.item()*syn_std + syn_mean
             else:
-                score, logit = model(Batch.from_data_list([ga]),
-                                     Batch.from_data_list([gb]),
-                                     go_emb, dock)
+                score, logit = model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),
+                                     go_emb,dock)
                 synergy_score = score.item()
-
             synergy_prob = torch.sigmoid(logit).item()
 
         progress.progress(100)
         with status: st.write("✅ Complete!")
 
-        # 3D visualization
         with viz_placeholder.container():
             if docking_ran and (pose_atoms_a or pose_atoms_b):
                 st.markdown("**Both drugs docked in protein binding pocket**")
-                show_docking_3d(pdb_content, pose_atoms_a, pose_atoms_b,
-                                name_a or "Drug A", name_b or "Drug B")
+                show_docking_3d(pdb_content,pose_atoms_a,pose_atoms_b,
+                                name_a or "Drug A",name_b or "Drug B")
                 st.caption(f"🔵 {name_a or 'Drug A'} &nbsp; 🟠 {name_b or 'Drug B'} &nbsp; 🎨 Protein &nbsp; *Drag to rotate*")
             else:
                 show_drugs_3d(smiles_a, smiles_b)
 
-        # Results
         st.markdown("---")
         st.markdown("### 📊 Results")
 
-        if synergy_score > 4.0:    verdict, color = "✅ Strongly Synergistic", "green"
-        elif synergy_score > 2.0:  verdict, color = "⚠️ Mildly Synergistic", "orange"
-        elif synergy_score > -1.0: verdict, color = "➖ Approximately Additive", "blue"
-        else:                      verdict, color = "❌ Antagonistic", "red"
+        if synergy_score > 4.0:    verdict,color="✅ Strongly Synergistic","green"
+        elif synergy_score > 2.0:  verdict,color="⚠️ Mildly Synergistic","orange"
+        elif synergy_score > -1.0: verdict,color="➖ Approximately Additive","blue"
+        else:                      verdict,color="❌ Antagonistic","red"
 
         m1,m2,m3,m4 = st.columns(4)
         m1.metric("Synergy Score (Loewe)", f"{synergy_score:.3f}")
@@ -636,24 +622,25 @@ if run_btn:
         st.markdown(f"### Verdict: :{color}[{verdict}]")
         st.caption(f"Cancer context: **{panel}** → **{cell_line}**")
 
-        # Known synergy comparison
+        st.session_state.history.insert(0, {
+            'drug_a': name_a or 'Drug A', 'drug_b': name_b or 'Drug B',
+            'cell_line': cell_line, 'score': synergy_score,
+            'verdict': verdict, 'dock_a': dock_score_a, 'dock_b': dock_score_b,
+        })
+        st.session_state.history = st.session_state.history[:5]
+
         if known:
             known_score, known_source = known
             delta = synergy_score - known_score
-            st.markdown(f"""
-<div class="known-score">
+            st.markdown(f"""<div class="known-score">
 📚 <strong>NCI ALMANAC Ground Truth</strong><br>
 Known synergy score: <strong>{known_score:.2f}</strong> ({known_source})<br>
-Model prediction: <strong>{synergy_score:.3f}</strong> &nbsp; 
-Error: <strong>{abs(delta):.2f}</strong> Loewe units
-</div>
-""", unsafe_allow_html=True)
+Model prediction: <strong>{synergy_score:.3f}</strong> &nbsp; Error: <strong>{abs(delta):.2f}</strong> Loewe units
+</div>""", unsafe_allow_html=True)
         else:
-            st.markdown(f"""
-<div class="unknown-score">
+            st.markdown(f"""<div class="unknown-score">
 🔮 <strong>Novel prediction</strong> — this drug pair × cell line not in NCI ALMANAC
-</div>
-""", unsafe_allow_html=True)
+</div>""", unsafe_allow_html=True)
 
         with st.expander("📋 Full docking report"):
             st.markdown(f"""
@@ -679,9 +666,6 @@ Error: <strong>{abs(delta):.2f}</strong> Loewe units
 | -1–2 | Approximately Additive | No significant interaction |
 | < -1 | Antagonistic | Imatinib + Dasatinib on ABL1 |
 
-**Docking score** (kcal/mol): more negative = stronger binding to the protein.
-Values below -8 are considered strong binders.
-
-**Synergy score** measures how much better the combination performs vs either drug alone.
-Based on the Loewe additivity model from NCI ALMANAC.
-            """)    
+**Docking score** (kcal/mol): more negative = stronger binding. Below -8 = strong binder.
+**Synergy score**: how much better the combination performs vs either drug alone (Loewe model).
+            """)
