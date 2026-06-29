@@ -1064,73 +1064,138 @@ Synergy score: <b>{score:.3f}</b> | {verdict}
 </div>""", unsafe_allow_html=True)
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TAB 7: AI Assistant
+# TAB 7: Mechanism Explorer (no API needed)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 with tab7:
-    st.markdown("### 🤖 AI Drug Combination Assistant")
-    st.caption("Ask anything about drug combinations, synergy, cancer biology, or your results.")
+    st.markdown("### 🔬 Mechanism of Action Explorer")
+    st.caption("Understand why drug combinations work or fail based on their targets and pathways.")
 
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
+    DRUG_MECHANISMS = {
+        "Vemurafenib":   {"target":"BRAF V600E","pathway":"MAPK/ERK","class":"BRAF inhibitor","moa":"Blocks mutant BRAF kinase, inhibiting ERK signaling and tumor proliferation"},
+        "Dabrafenib":    {"target":"BRAF V600E","pathway":"MAPK/ERK","class":"BRAF inhibitor","moa":"Selective BRAF inhibitor, reduces ERK phosphorylation in BRAF-mutant tumors"},
+        "Trametinib":    {"target":"MEK1/2","pathway":"MAPK/ERK","class":"MEK inhibitor","moa":"Blocks MEK1/2, downstream of BRAF, preventing ERK activation and cell proliferation"},
+        "Cobimetinib":   {"target":"MEK1","pathway":"MAPK/ERK","class":"MEK inhibitor","moa":"Allosteric MEK1 inhibitor that blocks ERK signaling"},
+        "Selumetinib":   {"target":"MEK1/2","pathway":"MAPK/ERK","class":"MEK inhibitor","moa":"Non-ATP competitive MEK inhibitor reducing tumor cell proliferation"},
+        "Imatinib":      {"target":"BCR-ABL/KIT/PDGFR","pathway":"RTK signaling","class":"TKI","moa":"Competitive inhibitor of BCR-ABL ATP binding, blocks CML proliferation"},
+        "Dasatinib":     {"target":"BCR-ABL/SRC","pathway":"RTK signaling","class":"TKI","moa":"Dual BCR-ABL and SRC family kinase inhibitor, more potent than imatinib"},
+        "Erlotinib":     {"target":"EGFR","pathway":"EGFR/RAS/MAPK","class":"EGFR TKI","moa":"Reversible EGFR inhibitor blocking downstream RAS-MAPK and PI3K-AKT signaling"},
+        "Gefitinib":     {"target":"EGFR","pathway":"EGFR/RAS/MAPK","class":"EGFR TKI","moa":"Selective EGFR inhibitor preventing EGF-driven tumor cell proliferation"},
+        "Lapatinib":     {"target":"EGFR/HER2","pathway":"EGFR/RAS/MAPK","class":"Dual TKI","moa":"Dual EGFR and HER2 inhibitor blocking both receptors simultaneously"},
+        "Osimertinib":   {"target":"EGFR T790M","pathway":"EGFR/RAS/MAPK","class":"3rd gen EGFR TKI","moa":"Irreversible EGFR inhibitor overcoming T790M resistance mutation"},
+        "Afatinib":      {"target":"EGFR/HER2/HER4","pathway":"EGFR/RAS/MAPK","class":"Pan-HER TKI","moa":"Irreversible pan-HER inhibitor blocking all ErbB family members"},
+        "Olaparib":      {"target":"PARP1/2","pathway":"DNA repair","class":"PARP inhibitor","moa":"Traps PARP on DNA, preventing repair of single-strand breaks in BRCA-deficient tumors"},
+        "Rucaparib":     {"target":"PARP1/2/3","pathway":"DNA repair","class":"PARP inhibitor","moa":"Pan-PARP inhibitor with additional PARP trapping activity"},
+        "Niraparib":     {"target":"PARP1/2","pathway":"DNA repair","class":"PARP inhibitor","moa":"Potent PARP1/2 inhibitor causing synthetic lethality in HRD tumors"},
+        "Palbociclib":   {"target":"CDK4/6","pathway":"Cell cycle","class":"CDK4/6 inhibitor","moa":"Prevents Rb phosphorylation, blocking G1-S transition and cell cycle progression"},
+        "Abemaciclib":   {"target":"CDK4/6","pathway":"Cell cycle","class":"CDK4/6 inhibitor","moa":"More potent CDK4 inhibitor with additional CDK9 activity vs palbociclib"},
+        "Ribociclib":    {"target":"CDK4/6","pathway":"Cell cycle","class":"CDK4/6 inhibitor","moa":"Selective CDK4/6 inhibitor restoring cell cycle control in HR+ breast cancer"},
+        "Ibrutinib":     {"target":"BTK","pathway":"BCR signaling","class":"BTK inhibitor","moa":"Irreversible BTK inhibitor blocking B-cell receptor signaling in B-cell malignancies"},
+        "Zanubrutinib":  {"target":"BTK","pathway":"BCR signaling","class":"BTK inhibitor","moa":"Next-gen BTK inhibitor with improved selectivity over ibrutinib"},
+        "Acalabrutinib": {"target":"BTK","pathway":"BCR signaling","class":"BTK inhibitor","moa":"Highly selective covalent BTK inhibitor with fewer off-target effects"},
+        "Venetoclax":    {"target":"BCL-2","pathway":"Apoptosis","class":"BCL-2 inhibitor","moa":"BH3 mimetic releasing pro-apoptotic proteins from BCL-2, triggering apoptosis"},
+        "Alpelisib":     {"target":"PI3Kα","pathway":"PI3K/AKT/mTOR","class":"PI3K inhibitor","moa":"Selective PI3Kα inhibitor blocking PI3K-driven survival signaling"},
+        "Paclitaxel":    {"target":"Tubulin","pathway":"Mitosis","class":"Taxane","moa":"Stabilizes microtubules preventing depolymerization, arresting cells in mitosis"},
+        "Doxorubicin":   {"target":"TOP2/DNA","pathway":"DNA damage","class":"Anthracycline","moa":"Intercalates DNA and inhibits TOP2, causing double-strand breaks and apoptosis"},
+        "Gemcitabine":   {"target":"RRM1","pathway":"Nucleotide synthesis","class":"Antimetabolite","moa":"Nucleoside analog inhibiting ribonucleotide reductase and DNA synthesis"},
+        "Capecitabine":  {"target":"TYMS","pathway":"Nucleotide synthesis","class":"Antimetabolite","moa":"Oral 5-FU prodrug converted to 5-FU in tumor tissue inhibiting thymidylate synthase"},
+        "Temozolomide":  {"target":"DNA","pathway":"DNA damage","class":"Alkylating agent","moa":"Alkylates guanine at O6 position causing DNA damage and apoptosis in glioblastoma"},
+        "Sorafenib":     {"target":"BRAF/VEGFR/PDGFR","pathway":"MAPK/angiogenesis","class":"Multi-TKI","moa":"Multi-kinase inhibitor blocking tumor proliferation and angiogenesis"},
+        "Sunitinib":     {"target":"VEGFR/PDGFR/KIT","pathway":"Angiogenesis","class":"Multi-TKI","moa":"Anti-angiogenic TKI blocking tumor vascularization and proliferation"},
+        "Alectinib":     {"target":"ALK","pathway":"ALK/RAS/MAPK","class":"ALK inhibitor","moa":"2nd gen ALK inhibitor overcoming crizotinib resistance with CNS penetration"},
+        "Belinostat":    {"target":"HDAC","pathway":"Epigenetics","class":"HDAC inhibitor","moa":"Pan-HDAC inhibitor causing histone hyperacetylation and tumor cell differentiation"},
+        "Vorinostat":    {"target":"HDAC","pathway":"Epigenetics","class":"HDAC inhibitor","moa":"First FDA-approved HDAC inhibitor inducing cell cycle arrest and apoptosis"},
+    }
 
-    # Display chat history
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg['role']):
-            st.markdown(msg['content'])
+    SYNERGY_RULES = {
+        ("MAPK/ERK","MAPK/ERK"): ("⚠️ Same pathway — possible antagonism or redundancy. Both drugs hit the same cascade (BRAF→MEK→ERK). "
+            "Exception: vertical inhibition (BRAF+MEK) often synergizes by preventing feedback reactivation."),
+        ("EGFR/RAS/MAPK","MAPK/ERK"): ("✅ Likely synergistic — upstream+downstream combination. "
+            "EGFR inhibition reduces RAS activation while MEK/BRAF inhibition blocks downstream signaling, preventing bypass resistance."),
+        ("MAPK/ERK","EGFR/RAS/MAPK"): ("✅ Likely synergistic — upstream+downstream combination."),
+        ("DNA repair","DNA damage"): ("✅ Strong synergy expected — PARP inhibition prevents repair of DNA damage caused by the chemotherapy agent. "
+            "Classic synthetic lethality strategy."),
+        ("DNA damage","DNA repair"): ("✅ Strong synergy expected — chemotherapy creates DNA damage that PARP inhibitors prevent from being repaired."),
+        ("Cell cycle","DNA damage"): ("✅ Likely synergistic — CDK inhibition arrests cells in G1, making them more sensitive to DNA-damaging agents."),
+        ("DNA damage","Cell cycle"): ("✅ Likely synergistic — DNA damage triggers checkpoints that CDK inhibitors can exploit."),
+        ("Apoptosis","DNA damage"): ("✅ Likely synergistic — BCL-2 inhibition lowers the apoptotic threshold, sensitizing cells to DNA damage."),
+        ("DNA damage","Apoptosis"): ("✅ Likely synergistic — DNA damage pushes cells toward apoptosis that BCL-2 inhibitors facilitate."),
+        ("BCR signaling","Apoptosis"): ("✅ Strong synergy — BTK inhibition reduces survival signals while BCL-2 inhibition forces apoptosis. "
+            "Venetoclax+ibrutinib is a validated CLL combination."),
+        ("Apoptosis","BCR signaling"): ("✅ Strong synergy — validated combination in CLL."),
+        ("PI3K/AKT/mTOR","MAPK/ERK"): ("✅ Likely synergistic — dual pathway blockade. Tumors often activate PI3K as a bypass when MAPK is inhibited."),
+        ("MAPK/ERK","PI3K/AKT/mTOR"): ("✅ Likely synergistic — dual pathway blockade prevents bypass resistance."),
+        ("Mitosis","DNA damage"): ("✅ Likely synergistic — taxanes arrest cells in mitosis making them more vulnerable to DNA damage."),
+        ("DNA damage","Mitosis"): ("✅ Likely synergistic."),
+        ("Epigenetics","DNA damage"): ("✅ Likely synergistic — HDAC inhibition opens chromatin, making DNA more accessible to damaging agents."),
+        ("Nucleotide synthesis","DNA damage"): ("✅ Synergistic — both deplete DNA building blocks or damage DNA through complementary mechanisms."),
+    }
 
-    # System context
-    system_prompt = f"""You are an expert oncology and pharmacology AI assistant embedded in ProteinSynergyDock — 
-a drug combination synergy prediction platform. You help researchers understand:
-- Drug combination synergy and antagonism
-- Cancer biology and targeted therapy
-- Protein-drug interactions and docking
-- Clinical trial results and literature
-- How to interpret synergy scores (Loewe additivity model)
-- The NCI ALMANAC dataset and combination screening
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        drug_moa_a = st.selectbox("Drug A:", list(DRUG_MECHANISMS.keys()),
+            index=list(DRUG_MECHANISMS.keys()).index("Vemurafenib"), key="moa_a")
+    with col_m2:
+        drug_moa_b = st.selectbox("Drug B:", list(DRUG_MECHANISMS.keys()),
+            index=list(DRUG_MECHANISMS.keys()).index("Trametinib"), key="moa_b")
 
-The platform uses GATv2 graph neural networks trained on 107,103 NCI ALMANAC measurements,
-AutoDock Vina for real molecular docking, and ProteinWhisper++ for protein function annotation.
-Synergy scores: >0.5 = strongly synergistic, 0.1-0.5 = mildly synergistic, 
--0.1 to 0.1 = additive, <-0.1 = antagonistic.
+    if drug_moa_a and drug_moa_b and drug_moa_a != drug_moa_b:
+        moa_a = DRUG_MECHANISMS[drug_moa_a]
+        moa_b = DRUG_MECHANISMS[drug_moa_b]
 
-Be concise, scientifically accurate, and helpful. When discussing specific drug pairs,
-mention their mechanisms of action and why they might synergize or antagonize."""
+        col_info1, col_info2 = st.columns(2)
+        with col_info1:
+            st.markdown(f"""<div style="background:#1a1a2e;border-left:4px solid #4fc3f7;
+            padding:12px;border-radius:6px;color:white;">
+            <b>💊 {drug_moa_a}</b><br>
+            <b>Target:</b> {moa_a['target']}<br>
+            <b>Pathway:</b> {moa_a['pathway']}<br>
+            <b>Class:</b> {moa_a['class']}<br>
+            <b>MoA:</b> {moa_a['moa']}
+            </div>""", unsafe_allow_html=True)
+        with col_info2:
+            st.markdown(f"""<div style="background:#1a1a2e;border-left:4px solid #ff9800;
+            padding:12px;border-radius:6px;color:white;">
+            <b>💊 {drug_moa_b}</b><br>
+            <b>Target:</b> {moa_b['target']}<br>
+            <b>Pathway:</b> {moa_b['pathway']}<br>
+            <b>Class:</b> {moa_b['class']}<br>
+            <b>MoA:</b> {moa_b['moa']}
+            </div>""", unsafe_allow_html=True)
 
-    if prompt := st.chat_input("Ask about drug combinations, synergy, cancer biology..."):
-        st.session_state.chat_history.append({'role':'user','content':prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+        st.markdown("---")
+        st.markdown("#### 🧬 Combination Analysis")
 
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    messages = [{"role": m["role"], "content": m["content"]}
-                                for m in st.session_state.chat_history]
-                    resp = requests.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": st.secrets.get("ANTHROPIC_API_KEY",""),
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json={
-                            "model": "claude-haiku-4-5-20251001",
-                            "max_tokens": 1024,
-                            "system": system_prompt,
-                            "messages": messages,
-                        },
-                        timeout=30,
-                    )
-                    if resp.status_code == 200:
-                        answer = resp.json()['content'][0]['text']
-                        st.markdown(answer)
-                        st.session_state.chat_history.append({'role':'assistant','content':answer})
-                    else:
-                        st.error(f"API error {resp.status_code}. Add ANTHROPIC_API_KEY to Streamlit secrets.")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+        pathway_key = (moa_a['pathway'], moa_b['pathway'])
+        if pathway_key in SYNERGY_RULES:
+            explanation = SYNERGY_RULES[pathway_key]
+        elif moa_a['target'] == moa_b['target']:
+            explanation = (f"⚠️ Same target ({moa_a['target']}) — both drugs compete for the same binding site. "
+                          "This typically leads to antagonism rather than synergy. "
+                          "Consider combining drugs with complementary targets instead.")
+        elif moa_a['class'] == moa_b['class']:
+            explanation = (f"⚠️ Same drug class ({moa_a['class']}) — redundant mechanism of action. "
+                          "Combinations within the same class often show additive effects at best.")
+        else:
+            explanation = (f"🔬 Complementary mechanisms — {drug_moa_a} targets {moa_a['target']} "
+                          f"while {drug_moa_b} targets {moa_b['target']}. "
+                          f"These operate in {'the same' if moa_a['pathway']==moa_b['pathway'] else 'different'} pathways. "
+                          f"Synergy potential depends on tumor dependency on these targets.")
 
-    if st.button("🗑️ Clear chat"):
-        st.session_state.chat_history = []
-        st.rerun()
+        bg = '#1e3a1e' if '✅' in explanation else '#3a1e1e' if '⚠️' in explanation else '#1e2a3a'
+        border = '#4caf50' if '✅' in explanation else '#ff5722' if '⚠️' in explanation else '#4fc3f7'
+        st.markdown(f"""<div style="background:{bg};border-left:4px solid {border};
+        padding:16px;border-radius:6px;color:white;margin:8px 0;font-size:15px;">
+        {explanation}
+        </div>""", unsafe_allow_html=True)
+
+        # Pathway diagram
+        same_pathway = moa_a['pathway'] == moa_b['pathway']
+        st.markdown(f"""
+| Property | {drug_moa_a} | {drug_moa_b} |
+|----------|------------|------------|
+| Target | {moa_a['target']} | {moa_b['target']} |
+| Pathway | {moa_a['pathway']} | {moa_b['pathway']} |
+| Class | {moa_a['class']} | {moa_b['class']} |
+| Same pathway | {'Yes ⚠️' if same_pathway else 'No ✅'} | — |
+        """)
