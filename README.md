@@ -4,7 +4,7 @@
 
 ---
 
-![Docking visualization](demo.png.png)
+![Docking visualization](demo.png)
 *Vemurafenib (cyan) and Trametinib (orange) docked inside BRAF kinase. Both drugs automatically positioned in the binding pocket via AutoDock Vina.*
 
 ---
