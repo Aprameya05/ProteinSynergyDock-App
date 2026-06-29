@@ -476,7 +476,15 @@ with st.sidebar:
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔬 Predict Synergy", "🗺️ Synergy Landscape", "📊 Cell Line Comparison", "🏥 Clinical Trials", "📚 Literature"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "🔬 Predict Synergy",
+    "🗺️ Synergy Landscape", 
+    "📊 Cell Line Comparison",
+    "🏥 Clinical Trials",
+    "📚 Literature",
+    "🔄 Drug Repurposing",
+    "🤖 AI Assistant",
+])
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TAB 1: Predict Synergy
@@ -985,3 +993,144 @@ with tab5:
 
             except Exception as e:
                 st.error(f"Error searching PubMed: {e}")
+                # ═══════════════════════════════════════════════════════════════════════════════
+# TAB 6: Drug Repurposing Mode
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab6:
+    st.markdown("### 🔄 Drug Repurposing — Find Best Partner for Your Drug")
+    st.caption("Select a drug and cancer type — we'll rank all 27 other drugs by predicted synergy.")
+
+    if scores_data is None:
+        st.warning("Precomputed scores not found.")
+    else:
+        all_drugs_r = scores_data['Melanoma']['drugs']
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            anchor_drug = st.selectbox("Your drug:", all_drugs_r,
+                index=all_drugs_r.index("Imatinib") if "Imatinib" in all_drugs_r else 0,
+                key="repurpose_drug")
+        with col_r2:
+            repurpose_panel = st.selectbox("Cancer type:", list(scores_data.keys()),
+                key="repurpose_panel")
+
+        pd_r    = scores_data[repurpose_panel]
+        drugs_r = pd_r['drugs']
+        mat_r   = np.array(pd_r['matrix'])
+        cl_r    = pd_r['cell_line']
+
+        if anchor_drug in drugs_r:
+            anchor_idx = drugs_r.index(anchor_drug)
+            scores_row = [(drugs_r[j], float(mat_r[anchor_idx][j]))
+                          for j in range(len(drugs_r)) if j != anchor_idx]
+            scores_row.sort(key=lambda x: x[1], reverse=True)
+
+            st.markdown(f"#### Best partners for **{anchor_drug}** in **{repurpose_panel}** ({cl_r})")
+
+            # Ranked bar chart
+            drug_names = [x[0] for x in scores_row]
+            drug_scores = [x[1] for x in scores_row]
+            colors = ['#d73027' if s>0.1 else '#2166ac' if s<-0.1 else '#888'
+                      for s in drug_scores]
+
+            fig_rep = go.Figure(go.Bar(
+                x=drug_scores, y=drug_names,
+                orientation='h',
+                marker_color=colors,
+                text=[f"{s:.3f}" for s in drug_scores],
+                textposition='outside',
+            ))
+            fig_rep.update_layout(
+                height=700,
+                xaxis=dict(title="Synergy score", zeroline=True, zerolinecolor='#666'),
+                yaxis=dict(autorange='reversed'),
+                paper_bgcolor='rgba(0,0,0,0)',
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='white'),
+                showlegend=False,
+                margin=dict(l=140, r=80, t=20, b=40),
+            )
+            st.plotly_chart(fig_rep, use_container_width=True)
+
+            # Top 5 recommendations
+            st.markdown("#### 🏆 Top 5 Recommended Combinations")
+            for i, (drug, score) in enumerate(scores_row[:5]):
+                verdict, color = get_verdict(score)
+                st.markdown(f"""
+<div style="background:#1a1a2e;border-left:4px solid {'#d73027' if score>0.1 else '#2166ac'};
+     padding:12px;border-radius:6px;margin:6px 0;color:white;">
+<b>#{i+1} {anchor_drug} + {drug}</b><br>
+Synergy score: <b>{score:.3f}</b> | {verdict}
+</div>""", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB 7: AI Assistant
+# ═══════════════════════════════════════════════════════════════════════════════
+
+with tab7:
+    st.markdown("### 🤖 AI Drug Combination Assistant")
+    st.caption("Ask anything about drug combinations, synergy, cancer biology, or your results.")
+
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
+
+    # Display chat history
+    for msg in st.session_state.chat_history:
+        with st.chat_message(msg['role']):
+            st.markdown(msg['content'])
+
+    # System context
+    system_prompt = f"""You are an expert oncology and pharmacology AI assistant embedded in ProteinSynergyDock — 
+a drug combination synergy prediction platform. You help researchers understand:
+- Drug combination synergy and antagonism
+- Cancer biology and targeted therapy
+- Protein-drug interactions and docking
+- Clinical trial results and literature
+- How to interpret synergy scores (Loewe additivity model)
+- The NCI ALMANAC dataset and combination screening
+
+The platform uses GATv2 graph neural networks trained on 107,103 NCI ALMANAC measurements,
+AutoDock Vina for real molecular docking, and ProteinWhisper++ for protein function annotation.
+Synergy scores: >0.5 = strongly synergistic, 0.1-0.5 = mildly synergistic, 
+-0.1 to 0.1 = additive, <-0.1 = antagonistic.
+
+Be concise, scientifically accurate, and helpful. When discussing specific drug pairs,
+mention their mechanisms of action and why they might synergize or antagonize."""
+
+    if prompt := st.chat_input("Ask about drug combinations, synergy, cancer biology..."):
+        st.session_state.chat_history.append({'role':'user','content':prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    messages = [{"role": m["role"], "content": m["content"]}
+                                for m in st.session_state.chat_history]
+                    resp = requests.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={
+                            "x-api-key": st.secrets.get("ANTHROPIC_API_KEY",""),
+                            "anthropic-version": "2023-06-01",
+                            "content-type": "application/json",
+                        },
+                        json={
+                            "model": "claude-haiku-4-5-20251001",
+                            "max_tokens": 1024,
+                            "system": system_prompt,
+                            "messages": messages,
+                        },
+                        timeout=30,
+                    )
+                    if resp.status_code == 200:
+                        answer = resp.json()['content'][0]['text']
+                        st.markdown(answer)
+                        st.session_state.chat_history.append({'role':'assistant','content':answer})
+                    else:
+                        st.error(f"API error {resp.status_code}. Add ANTHROPIC_API_KEY to Streamlit secrets.")
+                except Exception as e:
+                    st.error(f"Error: {e}")
+
+    if st.button("🗑️ Clear chat"):
+        st.session_state.chat_history = []
+        st.rerun()
