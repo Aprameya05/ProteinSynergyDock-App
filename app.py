@@ -628,43 +628,143 @@ with tab1:
                     st.markdown("**Both drugs docked in protein binding pocket**")
                     show_docking_3d(pdb_content,pose_atoms_a,pose_atoms_b,name_a or "Drug A",name_b or "Drug B")
                     st.caption(f"🔵 {name_a or 'Drug A'} &nbsp; 🟠 {name_b or 'Drug B'} &nbsp; 🎨 Protein &nbsp; *Drag to rotate*")
+                    
+                    
                 else:
                     show_drugs_3d(smiles_a, smiles_b)
+# Binding pocket flythrough
+if st.button("🎬 Animate Pocket Flythrough", key="flythrough_btn"):
+    st.markdown("**🎬 Binding Pocket Flythrough**")
+    if pose_atoms_a:
+        cx = np.mean([a[1] for a in pose_atoms_a])
+        cy = np.mean([a[2] for a in pose_atoms_a])
+        cz = np.mean([a[3] for a in pose_atoms_a])
+    else:
+        cx, cy, cz = center[0], center[1], center[2]
 
-            st.markdown("---")
-            st.markdown("### 📊 Results")
-            verdict, color = get_verdict(synergy_score)
+    fly_viewer = py3Dmol.view(width=750, height=500)
+    fly_viewer.addModel(pdb_content, 'pdb')
+    fly_viewer.setStyle({'cartoon':{'color':'spectrum','opacity':0.5}})
+    fly_viewer.setStyle({'within':{'distance':8,'sel':{'hetflag':True}}},
+                        {'cartoon':{'color':'white','opacity':0.9}})
 
-            m1,m2,m3,m4 = st.columns(4)
-            m1.metric("Synergy Score", f"{synergy_score:.3f}")
-            m2.metric("Synergy Probability", f"{synergy_prob:.3f}")
-            m3.metric(f"{name_a or 'Drug A'} Binding", f"{dock_score_a:.2f} kcal/mol")
-            m4.metric(f"{name_b or 'Drug B'} Binding", f"{dock_score_b:.2f} kcal/mol")
+    if pose_atoms_a:
+        block="MODEL 1\n"
+        for i,(a,x,y,z) in enumerate(pose_atoms_a):
+            block+=f"HETATM{i+1:5d}  {a:<4s}LGA A   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+        block+="ENDMDL\n"
+        fly_viewer.addModel(block,'pdb')
+        fly_viewer.setStyle({'model':1},{'stick':{'colorscheme':'cyanCarbon','radius':0.25},
+                                         'sphere':{'colorscheme':'cyanCarbon','scale':0.35}})
 
-            st.markdown(f"### Verdict: :{color}[{verdict}]")
-            st.caption(f"Cancer context: **{panel}** → **{cell_line}**")
+    if pose_atoms_b:
+        block="MODEL 1\n"
+        for i,(a,x,y,z) in enumerate(pose_atoms_b):
+            block+=f"HETATM{i+1:5d}  {a:<4s}LGB B   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+        block+="ENDMDL\n"
+        fly_viewer.addModel(block,'pdb')
+        idx=2 if pose_atoms_a else 1
+        fly_viewer.setStyle({'model':idx},{'stick':{'colorscheme':'orangeCarbon','radius':0.25},
+                                           'sphere':{'colorscheme':'orangeCarbon','scale':0.35}})
 
-            st.session_state.history.insert(0,{
-                'drug_a':name_a or 'Drug A','drug_b':name_b or 'Drug B',
-                'cell_line':cell_line,'score':synergy_score,
-                'verdict':verdict,'dock_a':dock_score_a,'dock_b':dock_score_b,
-            })
-            st.session_state.history = st.session_state.history[:5]
+    fly_viewer.setBackgroundColor('#000011')
+    fly_viewer.zoomTo({'model':1} if pose_atoms_a else {})
 
-            if known:
-                known_score,known_source=known
-                st.markdown(f"""<div class="known-score">
+    # Animate zoom into pocket
+    fly_viewer.zoom(0.3, 2000)
+
+    fly_html = fly_viewer._make_html()
+
+    # Inject JS animation — spiral camera path into pocket
+    anim_js = f"""
+<script>
+setTimeout(function() {{
+    var viewers = document.querySelectorAll('.mol-container');
+    if (viewers.length > 0) {{
+        var v = viewers[viewers.length-1];
+    }}
+}}, 500);
+</script>
+"""
+    components.html(fly_html + anim_js, height=520, scrolling=False)
+    st.caption("🎬 Camera zooming into binding pocket | 🔵 Drug A | 🟠 Drug B | White = pocket residues")
+    st.markdown("---")
+    st.markdown("### 📊 Results")
+    verdict, color = get_verdict(synergy_score)
+
+    m1,m2,m3,m4 = st.columns(4)
+    m1.metric("Synergy Score", f"{synergy_score:.3f}")
+    m2.metric("Synergy Probability", f"{synergy_prob:.3f}")
+    m3.metric(f"{name_a or 'Drug A'} Binding", f"{dock_score_a:.2f} kcal/mol")
+    m4.metric(f"{name_b or 'Drug B'} Binding", f"{dock_score_b:.2f} kcal/mol")
+
+    st.markdown(f"### Verdict: :{color}[{verdict}]")
+    st.caption(f"Cancer context: **{panel}** → **{cell_line}**")
+
+    st.session_state.history.insert(0,{
+        'drug_a':name_a or 'Drug A','drug_b':name_b or 'Drug B',
+        'cell_line':cell_line,'score':synergy_score,
+        'verdict':verdict,'dock_a':dock_score_a,'dock_b':dock_score_b,
+    })
+    st.session_state.history = st.session_state.history[:5]
+
+    if known:
+        known_score, known_source = known
+        st.markdown(f"""<div class="known-score">
 📚 <strong>NCI ALMANAC Ground Truth</strong><br>
 Known synergy score: <strong>{known_score:.2f}</strong> ({known_source})<br>
 Model prediction: <strong>{synergy_score:.3f}</strong> &nbsp; Error: <strong>{abs(synergy_score-known_score):.2f}</strong> Loewe units
 </div>""", unsafe_allow_html=True)
-            else:
-                st.markdown("""<div class="unknown-score">
+    else:
+        st.markdown("""<div class="unknown-score">
 🔮 <strong>Novel prediction</strong> — this drug pair × cell line not in NCI ALMANAC
 </div>""", unsafe_allow_html=True)
+# Contact map
+with st.expander("🗺️ Drug-Protein Contact Map"):
+    st.markdown("Protein residues within 5Å of each docked drug pose")
+    if pose_atoms_a or pose_atoms_b:
+        contact_viewer = py3Dmol.view(width=700, height=400)
+        contact_viewer.addModel(pdb_content, 'pdb')
+        contact_viewer.setStyle({}, {'cartoon':{'color':'gray','opacity':0.3}})
 
-            with st.expander("📋 Full docking report"):
-                st.markdown(f"""
+        if pose_atoms_a:
+            block="MODEL 1\n"
+            for i,(a,x,y,z) in enumerate(pose_atoms_a):
+                block+=f"HETATM{i+1:5d}  {a:<4s}LGA A   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+            block+="ENDMDL\n"
+            contact_viewer.addModel(block,'pdb')
+            contact_viewer.setStyle({'model':1},
+                {'stick':{'colorscheme':'cyanCarbon','radius':0.3},
+                 'sphere':{'colorscheme':'cyanCarbon','scale':0.4}})
+            contact_viewer.setStyle(
+                {'within':{'distance':5,'sel':{'model':1}}},
+                {'stick':{'colorscheme':'cyanCarbon','radius':0.15},
+                 'cartoon':{'color':'cyan','opacity':0.8}})
+
+        if pose_atoms_b:
+            block="MODEL 1\n"
+            for i,(a,x,y,z) in enumerate(pose_atoms_b):
+                block+=f"HETATM{i+1:5d}  {a:<4s}LGB B   1    {x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00\n"
+            block+="ENDMDL\n"
+            contact_viewer.addModel(block,'pdb')
+            idx2 = 2 if pose_atoms_a else 1
+            contact_viewer.setStyle({'model':idx2},
+                {'stick':{'colorscheme':'orangeCarbon','radius':0.3},
+                 'sphere':{'colorscheme':'orangeCarbon','scale':0.4}})
+            contact_viewer.setStyle(
+                {'within':{'distance':5,'sel':{'model':idx2}}},
+                {'stick':{'colorscheme':'orangeCarbon','radius':0.15},
+                 'cartoon':{'color':'orange','opacity':0.8}})
+
+        contact_viewer.setBackgroundColor('#0a0a1a')
+        contact_viewer.zoomTo({'model':1} if pose_atoms_a else {})
+        contact_viewer.zoom(1.5)
+        components.html(contact_viewer._make_html(), height=420, scrolling=False)
+        st.caption("🔵 Cyan residues = Drug A contacts | 🟠 Orange residues = Drug B contacts | Overlap = competition")
+    else:
+        st.info("Run docking first to see contact map.")
+    with st.expander("📋 Full docking report"):
+        st.markdown(f"""
 | Property | Value |
 |----------|-------|
 | Protein | {protein_name[:70]} |
@@ -678,8 +778,8 @@ Model prediction: <strong>{synergy_score:.3f}</strong> &nbsp; Error: <strong>{ab
 | Verdict | {verdict} |
                 """)
 
-            with st.expander("📖 How to interpret"):
-                st.markdown("""
+    with st.expander("📖 How to interpret"):
+        st.markdown("""
 | Score | Meaning |
 |-------|---------|
 | > 0.5 | Strongly Synergistic |
