@@ -586,7 +586,7 @@ if run_btn:
                 score, logit = model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),
                                      go_emb,dock,cell_idx)
                 syn_mean, syn_std = syn_scale
-                synergy_score = score.item()*syn_std + syn_mean
+                synergy_score = score.item()
             else:
                 score, logit = model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),
                                      go_emb,dock)
@@ -608,9 +608,9 @@ if run_btn:
         st.markdown("---")
         st.markdown("### 📊 Results")
 
-        if synergy_score > 1.0:    verdict,color="✅ Strongly Synergistic","green"
-        elif synergy_score > 0.0:  verdict,color="⚠️ Mildly Synergistic","orange"
-        elif synergy_score > -2.0: verdict,color="➖ Approximately Additive","blue"
+        if synergy_score > 0.5:    verdict,color="✅ Strongly Synergistic","green"
+        elif synergy_score > 0.1:  verdict,color="⚠️ Mildly Synergistic","orange"
+        elif synergy_score > -0.1: verdict,color="➖ Approximately Additive","blue"
         else:                      verdict,color="❌ Antagonistic","red"
 
         m1,m2,m3,m4 = st.columns(4)
@@ -661,10 +661,10 @@ Model prediction: <strong>{synergy_score:.3f}</strong> &nbsp; Error: <strong>{ab
             st.markdown("""
 | Score | Meaning | Example |
 |-------|---------|---------|
-| > 4.0 | Strongly Synergistic | Vemurafenib + Trametinib in melanoma |
-| 2–4 | Mildly Synergistic | Olaparib + Rucaparib in ovarian cancer |
-| -1–2 | Approximately Additive | No significant interaction |
-| < -1 | Antagonistic | Imatinib + Dasatinib on ABL1 |
+| > 0.5 | Strongly Synergistic |
+| 0.1-0.5 | Mildly Synergistic |
+| -0.1-0.1 | Approximately Additive |
+| < -0.1 | Antagonistic |
 
 **Docking score** (kcal/mol): more negative = stronger binding. Below -8 = strong binder.
 **Synergy score**: how much better the combination performs vs either drug alone (Loewe model).
