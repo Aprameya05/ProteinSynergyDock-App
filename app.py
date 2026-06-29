@@ -858,10 +858,9 @@ with tab8:
 
     col1, col2 = st.columns(2)
     with col1:
-        target_gene = st.selectbox("Cancer Target Gene", list(MUTATION_DB.keys()))
+       target_gene = st.selectbox("Cancer Target Gene", list(MUTATION_DB.keys()), key="res_target_gene")
     with col2:
-        mut_drug = st.selectbox("Drug to Test", ["Vemurafenib", "Erlotinib", "Imatinib", "Dasatinib", "Crizotinib", "Osimertinib", "Gefitinib", "Dabrafenib", "Alectinib", "Nilotinib"])
-
+        mut_drug = st.selectbox("Drug to Test", ["Vemurafenib", "Erlotinib", "Imatinib", "Dasatinib", "Crizotinib", "Osimertinib", "Gefitinib", "Dabrafenib", "Alectinib", "Nilotinib"], key="res_mut_drug")
     gene_data = MUTATION_DB[target_gene]
     mutations = gene_data["mutations"]
 
