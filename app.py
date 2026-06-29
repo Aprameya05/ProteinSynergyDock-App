@@ -34,7 +34,7 @@ st.markdown("""
     .main-header h1 { color:#4fc3f7; font-size:2.5rem; margin:0; }
     .main-header p  { color:#b0bec5; margin:0.5rem 0 0; }
     .known-score { background:#1e3a1e; border-left:4px solid #4caf50;
-                   padding:12px; border-radius:6px; margin:8px 0; }
+               padding:12px; border-radius:6px; margin:8px 0; color:white; }
     .unknown-score { background:#2a2a1e; border-left:4px solid #ff9800;
                      padding:12px; border-radius:6px; margin:8px 0; }
 </style>
