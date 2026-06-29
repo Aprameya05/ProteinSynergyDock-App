@@ -19,7 +19,6 @@ st.markdown("""<style>
 .known-score{background:#1e3a1e;border-left:4px solid #4caf50;padding:12px;border-radius:6px;margin:8px 0;color:white;}
 .unknown-score{background:#2a2a1e;border-left:4px solid #ff9800;padding:12px;border-radius:6px;margin:8px 0;color:white;}
 .history-item{background:#1a1a2e;border-left:3px solid #4fc3f7;padding:8px;border-radius:4px;margin:4px 0;color:white;font-size:12px;}
-.feature-card{background:#1a1a2e;border:1px solid #2a2a4e;padding:16px;border-radius:8px;margin:8px 0;color:white;}
 </style>""", unsafe_allow_html=True)
 
 class DrugEncoder(nn.Module):
@@ -296,7 +295,7 @@ def prepare_ligand(smiles,name,wd):
         try: AllChem.Compute2DCoords(mol)
         except: return None
     sdf=f'{wd}/{name}.sdf'; pdb=f'{wd}/{name}.pdb'
-    Chem.SDWriter(sdf).write(mol)
+    w=Chem.SDWriter(sdf); w.write(mol); w.close()
     subprocess.run(['obabel',sdf,'-O',pdb,'-h'],capture_output=True)
     subprocess.run(['obabel',pdb,'-O',out,'--partialcharge','gasteiger'],capture_output=True)
     return out if os.path.exists(out) and os.path.getsize(out)>0 else None
@@ -501,7 +500,11 @@ with tab1:
                         sa,_=run_vina(vina_cmd,rec,la,center,size,oa,exhaustiveness)
                         if sa is not None:
                             dsa=sa; pa=read_pose(oa); dran=True
-                            st.session_state['pa']=pa; st.session_state['pdb_content']=pdb_content; st.session_state['center']=center
+                            st.session_state['pa']=pa
+                            st.session_state['pdb_content']=pdb_content
+                            st.session_state['center']=center
+                            st.session_state['pname']=pname
+                            st.session_state['bmethod']=bmethod
                             with stat: st.write(f"✅ {name_a or 'Drug A'}: {sa:.2f} kcal/mol")
                     prog.progress(60)
                     with stat: st.write(f"🔬 Docking {name_b or 'Drug B'}...")
@@ -515,6 +518,12 @@ with tab1:
                             with stat: st.write(f"✅ {name_b or 'Drug B'}: {sb:.2f} kcal/mol")
             else:
                 with stat: st.write("⚠️ Docking tools unavailable")
+            # Save all result variables to session state
+            st.session_state['dsa']=dsa; st.session_state['dsb']=dsb
+            st.session_state['dran']=dran; st.session_state['syn_score']=None
+            st.session_state['name_a']=name_a; st.session_state['name_b']=name_b
+            st.session_state['panel']=panel; st.session_state['cell_line']=cell_line
+            st.session_state['pdb_id']=pdb_id
             prog.progress(75)
             with stat: st.write("🧠 Predicting synergy...")
             go_emb=torch.zeros(512).unsqueeze(0); dock=torch.tensor([[float(dsa),float(dsb)]])
@@ -525,6 +534,7 @@ with tab1:
                 else:
                     score,logit=model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),go_emb,dock)
                 syn=score.item(); prob=torch.sigmoid(logit).item()
+            st.session_state['syn_score']=syn; st.session_state['syn_prob']=prob
             prog.progress(100)
             with stat: st.write("✅ Complete!")
             with viz.container():
@@ -536,9 +546,11 @@ with tab1:
                     show_drugs(smiles_a,smiles_b)
             st.markdown("---\n### 📊 Results")
             verdict,color=get_verdict(syn)
+            st.session_state['verdict']=verdict
             m1,m2,m3,m4=st.columns(4)
             m1.metric("Synergy Score",f"{syn:.3f}"); m2.metric("Synergy Probability",f"{prob:.3f}")
-            m3.metric(f"{name_a or 'Drug A'} Binding",f"{dsa:.2f} kcal/mol"); m4.metric(f"{name_b or 'Drug B'} Binding",f"{dsb:.2f} kcal/mol")
+            m3.metric(f"{name_a or 'Drug A'} Binding",f"{dsa:.2f} kcal/mol")
+            m4.metric(f"{name_b or 'Drug B'} Binding",f"{dsb:.2f} kcal/mol")
             st.markdown(f"### Verdict: :{color}[{verdict}]")
             st.caption(f"Cancer context: **{panel}** → **{cell_line}**")
             st.session_state.history.insert(0,{'drug_a':name_a or 'Drug A','drug_b':name_b or 'Drug B',
@@ -550,42 +562,67 @@ with tab1:
 Known: <strong>{ks:.2f}</strong> ({ksc}) | Predicted: <strong>{syn:.3f}</strong> | Error: <strong>{abs(syn-ks):.2f}</strong></div>""", unsafe_allow_html=True)
             else:
                 st.markdown("""<div class="unknown-score">🔮 <strong>Novel prediction</strong> — not in NCI ALMANAC</div>""", unsafe_allow_html=True)
-            if dran and (pa or pb):
-                if st.button("🎬 Animate Pocket Flythrough",key="fly"):
-                    fv=py3Dmol.view(width=750,height=500)
-                    fv.addModel(pdb_content,'pdb'); fv.setStyle({'cartoon':{'color':'spectrum','opacity':0.5}})
-                    if pa:
-                        fv.addModel(pose_block(pa,'A'),'pdb')
-                        fv.setStyle({'model':1},{'stick':{'colorscheme':'cyanCarbon','radius':0.25},'sphere':{'colorscheme':'cyanCarbon','scale':0.35}})
-                    if pb:
-                        fv.addModel(pose_block(pb,'B'),'pdb')
-                        idx=2 if pa else 1
-                        fv.setStyle({'model':idx},{'stick':{'colorscheme':'orangeCarbon','radius':0.25},'sphere':{'colorscheme':'orangeCarbon','scale':0.35}})
-                    fv.setBackgroundColor('#000011'); fv.zoomTo({'model':1} if pa else {}); fv.zoom(0.3,2000)
-                    components.html(fv._make_html(),height=520,scrolling=False)
-                    st.caption("🎬 Zooming into binding pocket | 🔵 Drug A | 🟠 Drug B")
-            with st.expander("🗺️ Drug-Protein Contact Map"):
-                if dran and (pa or pb):
-                    cv=py3Dmol.view(width=700,height=400)
-                    cv.addModel(pdb_content,'pdb'); cv.setStyle({},{'cartoon':{'color':'gray','opacity':0.3}})
-                    if pa:
-                        cv.addModel(pose_block(pa,'A'),'pdb')
-                        cv.setStyle({'model':1},{'stick':{'colorscheme':'cyanCarbon','radius':0.3},'sphere':{'colorscheme':'cyanCarbon','scale':0.4}})
-                        cv.setStyle({'within':{'distance':5,'sel':{'model':1}}},{'stick':{'colorscheme':'cyanCarbon','radius':0.15},'cartoon':{'color':'cyan','opacity':0.8}})
-                    if pb:
-                        cv.addModel(pose_block(pb,'B'),'pdb')
-                        idx2=2 if pa else 1
-                        cv.setStyle({'model':idx2},{'stick':{'colorscheme':'orangeCarbon','radius':0.3},'sphere':{'colorscheme':'orangeCarbon','scale':0.4}})
-                        cv.setStyle({'within':{'distance':5,'sel':{'model':idx2}}},{'stick':{'colorscheme':'orangeCarbon','radius':0.15},'cartoon':{'color':'orange','opacity':0.8}})
-                    cv.setBackgroundColor('#0a0a1a'); cv.zoomTo({'model':1} if pa else {}); cv.zoom(1.5)
-                    components.html(cv._make_html(),height=420,scrolling=False)
-                    st.caption("🔵 Cyan = Drug A contacts | 🟠 Orange = Drug B contacts | Overlap = competition")
-                else:
-                    st.info("Run docking first to see contact map.")
             with st.expander("📋 Full docking report"):
-                st.markdown(f"""| Property | Value |\n|----------|-------|\n| Protein | {pname[:70]} |\n| PDB ID | {pdb_id} |\n| Box method | {bmethod} |\n| {name_a or 'Drug A'} docking | {dsa:.3f} kcal/mol |\n| {name_b or 'Drug B'} docking | {dsb:.3f} kcal/mol |\n| Cancer type | {panel} |\n| Cell line | {cell_line} |\n| Synergy score | {syn:.3f} |\n| Verdict | {verdict} |""")
+                st.markdown(f"""| Property | Value |
+|----------|-------|
+| Protein | {pname[:70]} |
+| PDB ID | {pdb_id} |
+| Box method | {bmethod} |
+| {name_a or 'Drug A'} docking | {dsa:.3f} kcal/mol |
+| {name_b or 'Drug B'} docking | {dsb:.3f} kcal/mol |
+| Cancer type | {panel} |
+| Cell line | {cell_line} |
+| Synergy score | {syn:.3f} |
+| Verdict | {verdict} |""")
             with st.expander("📖 How to interpret"):
-                st.markdown("""| Score | Meaning |\n|-------|--------|\n| > 0.5 | Strongly Synergistic |\n| 0.1–0.5 | Mildly Synergistic |\n| -0.1–0.1 | Approximately Additive |\n| < -0.1 | Antagonistic |\n\n**Docking score**: more negative = stronger binding. Below -8 = strong binder.""")
+                st.markdown("""| Score | Meaning |
+|-------|---------|
+| > 0.5 | Strongly Synergistic |
+| 0.1–0.5 | Mildly Synergistic |
+| -0.1–0.1 | Approximately Additive |
+| < -0.1 | Antagonistic |
+
+**Docking score**: more negative = stronger binding. Below -8 = strong binder.""")
+
+    # ── Flythrough + Contact Map (outside tempdir, uses session state) ──────────
+    if st.session_state.get('pa') or st.session_state.get('pb'):
+        st.markdown("---")
+        _pa=st.session_state.get('pa'); _pb=st.session_state.get('pb')
+        _pdb=st.session_state.get('pdb_content','')
+
+        if st.button("🎬 Animate Pocket Flythrough",key="fly"):
+            if _pdb:
+                fv=py3Dmol.view(width=750,height=500)
+                fv.addModel(_pdb,'pdb'); fv.setStyle({'cartoon':{'color':'spectrum','opacity':0.5}})
+                if _pa:
+                    fv.addModel(pose_block(_pa,'A'),'pdb')
+                    fv.setStyle({'model':1},{'stick':{'colorscheme':'cyanCarbon','radius':0.25},'sphere':{'colorscheme':'cyanCarbon','scale':0.35}})
+                if _pb:
+                    fv.addModel(pose_block(_pb,'B'),'pdb')
+                    idx=2 if _pa else 1
+                    fv.setStyle({'model':idx},{'stick':{'colorscheme':'orangeCarbon','radius':0.25},'sphere':{'colorscheme':'orangeCarbon','scale':0.35}})
+                fv.setBackgroundColor('#000011'); fv.zoomTo({'model':1} if _pa else {}); fv.zoom(0.3,2000)
+                components.html(fv._make_html(),height=520,scrolling=False)
+                st.caption("🎬 Zooming into binding pocket | 🔵 Drug A | 🟠 Drug B")
+
+        with st.expander("🗺️ Drug-Protein Contact Map"):
+            if _pdb:
+                cv=py3Dmol.view(width=700,height=400)
+                cv.addModel(_pdb,'pdb'); cv.setStyle({},{'cartoon':{'color':'gray','opacity':0.3}})
+                if _pa:
+                    cv.addModel(pose_block(_pa,'A'),'pdb')
+                    cv.setStyle({'model':1},{'stick':{'colorscheme':'cyanCarbon','radius':0.3},'sphere':{'colorscheme':'cyanCarbon','scale':0.4}})
+                    cv.setStyle({'within':{'distance':5,'sel':{'model':1}}},{'stick':{'colorscheme':'cyanCarbon','radius':0.15},'cartoon':{'color':'cyan','opacity':0.8}})
+                if _pb:
+                    cv.addModel(pose_block(_pb,'B'),'pdb')
+                    idx2=2 if _pa else 1
+                    cv.setStyle({'model':idx2},{'stick':{'colorscheme':'orangeCarbon','radius':0.3},'sphere':{'colorscheme':'orangeCarbon','scale':0.4}})
+                    cv.setStyle({'within':{'distance':5,'sel':{'model':idx2}}},{'stick':{'colorscheme':'orangeCarbon','radius':0.15},'cartoon':{'color':'orange','opacity':0.8}})
+                cv.setBackgroundColor('#0a0a1a'); cv.zoomTo({'model':1} if _pa else {}); cv.zoom(1.5)
+                components.html(cv._make_html(),height=420,scrolling=False)
+                st.caption("🔵 Cyan = Drug A contacts | 🟠 Orange = Drug B contacts | Overlap = competition")
+            else:
+                st.info("Run docking first to see contact map.")
 
 # ═══ TAB 2 ════════════════════════════════════════════════════════════════════
 with tab2:
@@ -682,8 +719,7 @@ with tab4:
                             nct=im.get('nctId','N/A'); title=im.get('briefTitle','No title')
                             status=sm2.get('overallStatus','Unknown')
                             phase=dm.get('phases',['N/A']); ps=', '.join(phase) if isinstance(phase,list) else str(phase)
-                            sponsor=spm.get('leadSponsor',{}).get('name','Unknown')
-                            conds=cm.get('conditions',[])
+                            sponsor=spm.get('leadSponsor',{}).get('name','Unknown'); conds=cm.get('conditions',[])
                             icon={'RECRUITING':'🟢','ACTIVE_NOT_RECRUITING':'🟡','COMPLETED':'⚫'}.get(status,'⚪')
                             with st.expander(f"{icon} {title[:80]}..."):
                                 x1,x2,x3=st.columns(3)
@@ -781,4 +817,9 @@ with tab7:
         bc='#4caf50' if '✅' in expl else '#ff5722' if '⚠️' in expl else '#4fc3f7'
         st.markdown(f"""<div style="background:{bg};border-left:4px solid {bc};padding:16px;border-radius:6px;color:white;font-size:15px;">{expl}</div>""", unsafe_allow_html=True)
         sp=ma['pathway']==mb['pathway']
-        st.markdown(f"""| Property | {dma} | {dmb} |\n|----------|------|------|\n| Target | {ma['target']} | {mb['target']} |\n| Pathway | {ma['pathway']} | {mb['pathway']} |\n| Class | {ma['class']} | {mb['class']} |\n| Same pathway | {'Yes ⚠️' if sp else 'No ✅'} | — |""")
+        st.markdown(f"""| Property | {dma} | {dmb} |
+|----------|------|------|
+| Target | {ma['target']} | {mb['target']} |
+| Pathway | {ma['pathway']} | {mb['pathway']} |
+| Class | {ma['class']} | {mb['class']} |
+| Same pathway | {'Yes ⚠️' if sp else 'No ✅'} | — |""")
