@@ -1,66 +1,69 @@
-# ProteinSynergyDock
+# ProteinSynergyDock — Interactive Demo
 
-> Predict whether two cancer drugs will work better together — using real molecular docking and protein function annotation.
-
-**Live demo →** [proteinsydock.streamlit.app](https://aprameya05-proteinsynergydock-app.streamlit.app)
+**Live app →** [proteinsydock.streamlit.app](https://aprameya05-proteinsynergydock-app.streamlit.app)
 
 ---
 
-![3D docking visualization](demo.png.png)
-
-*Vemurafenib (cyan) and Trametinib (orange) docked inside BRAF kinase (PDB: 3OG7). FDA-approved combination for BRAF V600E melanoma.*
+![Docking visualization](demo.png.png)
+*Vemurafenib (cyan) and Trametinib (orange) docked inside BRAF kinase. Both drugs automatically positioned in the binding pocket via AutoDock Vina.*
 
 ---
-![Architecture](architecture.png)
-*Architecture.*
 
-## The problem
+## What this does
 
-Drug combination screening is expensive. Labs test thousands of pairs in cell cultures to find which ones actually synergize. Most computational tools try to shortcut this by predicting synergy from SMILES strings alone — essentially treating molecules as text.
+Input two drugs + a protein + a cancer cell line → the app automatically:
 
-The issue: they never ask *where* the drug sits in the protein, or *what* the protein does. Two drugs that bind the same pocket will compete, not synergize. Two drugs that bind complementary sites on the same protein often do. This geometric and functional context is exactly what current tools ignore.
+1. Fetches the protein 3D structure from RCSB PDB
+2. Docks both drugs into the binding pocket using AutoDock Vina (real docking, no shortcuts)
+3. Detects the binding pocket from co-crystallized ligand coordinates (HETATM method)
+4. Renders both docked drugs inside the protein ribbon in interactive 3D
+5. Predicts synergy score specific to the selected cancer cell line
+6. Compares prediction against NCI ALMANAC ground truth if the pair is known
 
-## What this does differently
+## Features
 
-You give it three things: two drug SMILES and a PDB ID. It does the rest automatically:
+**Drug inputs**
+- Select from 35+ known cancer drugs with SMILES auto-filled
+- Or paste any custom SMILES string
 
-1. Fetches the protein crystal structure from RCSB
-2. Runs AutoDock Vina on both drugs independently — real binding pose search, real affinity scores
-3. Reads the protein's biological function using ProteinWhisper++ (GO term prediction, Fmax 0.4006)
-4. Passes everything — 3D drug graphs, docking scores, GO context — through a cross-drug attention GNN
-5. Returns a Loewe synergy score and renders both docked poses inside the protein in 3D
+**Cancer context**
+- 9 cancer panels (Melanoma, NSCLC, Breast, Leukemia, Ovarian, CNS, Colon, Renal, Prostate)
+- 60 NCI-60 cell lines with cell-line-specific predictions
 
-## Results
+**3D visualization**
+- Interactive py3Dmol viewer — drag to rotate, scroll to zoom
+- Protein shown as spectrum-colored ribbon
+- Drug A in cyan, Drug B in orange
+- Binding pocket detected from crystal structure ligand coordinates
 
-| Model | Pearson r | AUROC |
-|-------|-----------|-------|
-| ProteinSynergyDock (this) | **0.5768** | 0.5408 |
-| DrugSynergy3D (fingerprints only) | 0.54 | 0.835 |
+**Ground truth comparison**
+- Looks up NCI ALMANAC known synergy score if the drug pair exists in the database
+- Shows prediction error vs ground truth
 
-Trained on 231 real NCI ALMANAC synergy measurements with 12 AutoDock Vina docking runs across cancer targets including ABL1, EGFR, BRAF, PARP1, and CDK4/6.
+**Results history**
+- Last 5 predictions saved in sidebar for comparison
 
+## Example drug pairs
 
-## Examples to try
+| Drug A | Drug B | PDB | Cancer | Known synergy |
+|--------|--------|-----|--------|---------------|
+| Vemurafenib | Trametinib | 3OG7 | Melanoma / UACC-62 | 8.4 ✅ |
+| Imatinib | Dasatinib | 2HYY | Leukemia / K-562 | -1.4 ❌ |
+| Erlotinib | Lapatinib | 1IVO | NSCLC / A549 | 5.5 ✅ |
+| Olaparib | Rucaparib | 4DQY | Ovarian / OVCAR-3 | 2.1 ⚠️ |
 
-| Drug A | Drug B | PDB ID | Expected result |
-|--------|--------|--------|----------------|
-| Vemurafenib | Trametinib | 3OG7 | ✅ Strongly synergistic (BRAF+MEK, FDA approved) |
-| Imatinib | Dasatinib | 2HYY | ❌ Antagonistic (both compete for ABL1 ATP pocket) |
-| Erlotinib | Lapatinib | 1IVO | ✅ Synergistic (dual EGFR inhibition) |
-| Olaparib | Rucaparib | 4DQY | ⚠️ Mildly synergistic (complementary PARP1 inhibition) |
+All pre-loaded in the Quick Examples dropdown.
 
-SMILES for all examples are pre-loaded in the dropdown.
+## Model
 
-## Stack
-
-- Docking: AutoDock Vina 1.2.7 + OpenBabel
-- Drug encoding: RDKit + PyTorch Geometric GATv2
-- Protein function: ProteinWhisper++ (ESM-2 650M + GO DAG decoder)
-- Visualization: py3Dmol
-- Frontend: Streamlit
+- **Architecture:** GATv2 drug encoder + cross-drug attention + FiLM GO conditioning + cell line embedding
+- **Pearson r:** 0.5768 | **AUROC:** 0.5408
+- **Training:** 107,103 real NCI ALMANAC synergy measurements
+- **Docking:** 842 AutoDock Vina runs across 20 cancer target proteins
+- **Protein function:** ProteinWhisper++ (Fmax 0.4006, 7.9× over baseline)
 
 ## Related
 
-- [ProteinSynergyDock](https://github.com/Aprameya05/ProteinSynergyDock) — training code and model weights
+- [ProteinSynergyDock](https://github.com/Aprameya05/ProteinSynergyDock) — model training code and weights
 - [ProteinWhisper](https://github.com/Aprameya05/ProteinWhisper) — protein function encoder
 - [DrugSynergy3D](https://github.com/Aprameya05/DrugSynergy3D) — SE(3) equivariant synergy prediction
