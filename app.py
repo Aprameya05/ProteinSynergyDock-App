@@ -121,7 +121,7 @@ DRUG_SMILES_LOOKUP={
     "Sunitinib":"CCN(CC)CCNC(=O)c1c(C)[nH]c(C=C2C(=O)Nc3ccc(F)cc32)c1C",
     "Olaparib":"O=C1CCCN1c1ccc(cc1)C(=O)c1[nH]ncc1C1CC1",
     "Niraparib":"OC(=O)c1ccc2[nH]ncc2c1-c1ccc(cn1)C1CCNCC1",
-    "Rucaparib":"NCc1cc2cc(F)ccc2[nH]1-c1ccc3NCCCC(=O)c3c1",
+    "Rucaparib":"CNCC1=CC=C(C=C1)C2=C3CCNC(=O)C4=CC(=CC(=C34)N2)F",
     "Palbociclib":"CC1=C(C(=NC(=C1)N2CCNCC2)N3CCCC3)C(=O)NC4=CC=CC=N4",
     "Abemaciclib":"CC1=NC(=NC(=C1)NC2=NC=CC(=N2)N3CCC(CC3)NC(=O)C4=CC=C(C=C4)F)C5=CC(=CC=C5)F",
     "Ribociclib":"CC1=NC(=NC(=C1)N2CCNCC2)C3=CC4=C(C=C3)N=CN=C4N5CCCC5",
@@ -134,7 +134,7 @@ DRUG_SMILES_LOOKUP={
     "Doxorubicin":"COc1cccc2C(=O)c3c(O)c4CC(O)(CC(OC5CC(N)C(O)C(C)O5)c4c(O)c3C(=O)c12)C(=O)CO",
     "Gemcitabine":"NC(=O)C1=CN(C(=O)N1)C1CC(F)(F)C(CO)O1",
     "Osimertinib":"C=CC(=O)Nc1cc2c(Nc3ccc(F)c(Cl)c3)nc(OC)nc2cc1N(C)CCN(C)C",
-    "Alectinib":"COc1cc2c(cc1N1CCC(CC1)c1ccc3[nH]ccc3c1)cc(=O)n1ccc(C#N)c21",
+    "Alectinib":"CCC1=C(C=C2C(=C1)C(=O)C3=C(C2(C)C)NC4=C3C=CC(=C4)C#N)N5CCC(CC5)N6CCOCC6",
     "Afatinib":"CN(C)C/C=C/C(=O)Nc1cc2c(Nc3ccc(F)c(Cl)c3)ncnc2cc1OC",
     "Capecitabine":"CCOC(=O)Nc1nc(=O)n(C2OC(C)C(O)C2O)cc1F",
     "Temozolomide":"Cn1nnc2c(C(N)=O)ncn12",
@@ -161,7 +161,7 @@ SHOWCASES={
     "✅ Vemurafenib + Trametinib (FDA Approved)":{"smiles_a":"CCCS(=O)(=O)Nc1ccc(F)c(C(=O)c2c[nH]c3ncc(-c4ccc(Cl)cc4)cc23)c1","smiles_b":"CC(=O)Nc1ccc(-c2cc3c(nc(N)nc3n2C)N2CCC(F)(F)CC2=O)cc1F","pdb_id":"3OG7","name_a":"Vemurafenib","name_b":"Trametinib","panel":"Melanoma","cell_line":"UACC-62","note":"FDA-approved BRAF+MEK combo for melanoma. Known synergy: **8.4**"},
     "❌ Imatinib + Dasatinib (Antagonistic)":{"smiles_a":"CC1=C(C=C(C=C1)NC(=O)C2=CC=C(C=C2)CN3CCN(CC3)C)NC4=NC=CC(=N4)C5=CN=CC=C5","smiles_b":"Cc1nc(Nc2ncc(s2)C(=O)Nc2c(C)cccc2Cl)cc(n1)N1CCN(CCO)CC1","pdb_id":"2HYY","name_a":"Imatinib","name_b":"Dasatinib","panel":"Leukemia","cell_line":"K-562","note":"Both compete for ABL1 ATP pocket. Known synergy: **-1.4**"},
     "✅ Erlotinib + Lapatinib (Synergistic)":{"smiles_a":"COCCOC1=C(C=C2C(=C1)C(=NC=N2)NC3=CC=CC(=C3)C#C)OCCOC","smiles_b":"CS(=O)(=O)CCNCc1oc(cc1)c2ccc3ncnc(Nc4ccc(Oc5cccc(Cl)c5)c(Cl)c4)c3c2","pdb_id":"1IVO","name_a":"Erlotinib","name_b":"Lapatinib","panel":"Non-Small Cell Lung Cancer","cell_line":"A549/ATCC","note":"Dual EGFR inhibition. Known synergy: **5.5**"},
-    "⚠️ Olaparib + Rucaparib (Mild Synergy)":{"smiles_a":"O=C1CCCN1c1ccc(cc1)C(=O)c1[nH]ncc1C1CC1","smiles_b":"NCc1cc2cc(F)ccc2[nH]1-c1ccc3NCCCC(=O)c3c1","pdb_id":"4DQY","name_a":"Olaparib","name_b":"Rucaparib","panel":"Ovarian Cancer","cell_line":"OVCAR-3","note":"PARP inhibition synergy. Known: **2.1**"},
+    "⚠️ Olaparib + Rucaparib (Mild Synergy)":{"smiles_a":"O=C1CCCN1c1ccc(cc1)C(=O)c1[nH]ncc1C1CC1","smiles_b":"CNCC1=CC=C(C=C1)C2=C3CCNC(=O)C4=CC(=CC(=C34)N2)F","pdb_id":"4DQY","name_a":"Olaparib","name_b":"Rucaparib","panel":"Ovarian Cancer","cell_line":"OVCAR-3","note":"PARP inhibition synergy. Known: **2.1**"},
 }
 
 DRUG_MECHANISMS={
