@@ -1,85 +1,120 @@
 # ProteinSynergyDock
 
-Structure-aware drug combination synergy prediction with real molecular docking, cell-line context, and resistance mutation analysis.
+> Predict whether two cancer drugs will work better together — using real molecular docking, graph neural networks, and cancer cell line context, with results exposed as standard healthcare interoperability resources.
 
-[![Tests](https://github.com/Aprameya05/ProteinSynergyDock-App/actions/workflows/tests.yml/badge.svg)](https://github.com/Aprameya05/ProteinSynergyDock-App/actions/workflows/tests.yml)
-[![Live App](https://img.shields.io/badge/demo-live-green)](https://proteinsynergydock-app-kddtbdmnkixw9c8jfnf8un.streamlit.app/)
+**Live demo →** [proteinsynergydock-app-kddtbdmnkixw9c8jfnf8un.streamlit.app](https://proteinsynergydock-app-kddtbdmnkixw9c8jfnf8un.streamlit.app/)
+**Live FHIR API →** [proteinsynergydock-fhir-api.onrender.com/docs](https://proteinsynergydock-fhir-api.onrender.com/docs)
+**Tests →** ![Tests](https://github.com/Aprameya05/ProteinSynergyDock-App/actions/workflows/tests.yml/badge.svg)
 
-## What this is
+---
 
-A GNN-based model that predicts whether a pair of drugs will act synergistically against a specific cancer cell line, grounded in real AutoDock Vina docking against the target protein structure rather than relying on chemical fingerprints alone. Trained on 107,103 synergy measurements from the NCI ALMANAC dataset across 60 cancer cell lines.
+![3D docking visualization](demo.png)
 
-This isn't a toy demo — every prediction in the "Predict Synergy" tab runs an actual docking simulation against a live-fetched PDB structure, and every drug's SMILES string is validated against RDKit before being trusted (see `tests/test_chemistry.py` — this exists because two malformed SMILES strings shipped to production undetected until a user hit them at runtime, which is exactly the failure class this suite now catches in CI).
+*Vemurafenib (cyan) and Trametinib (orange) docked inside BRAF kinase (PDB: 3OG7). FDA-approved combination for BRAF V600E melanoma.*
 
-## Architecture
+---
 
-```
-core.py          Pure business logic — zero Streamlit dependency, fully unit tested
-app.py           Streamlit UI layer — imports from core.py, no duplicated logic
-tests/           202 tests covering chemistry validity, docking geometry,
-                  synergy verdict thresholds, mutation database integrity,
-                  and the natural-language query parser
-.github/workflows/  CI: tests run on every push across Python 3.10 and 3.11
-```
+![Architecture](architecture.png)
 
-The split between `core.py` and `app.py` matters: Streamlit scripts execute top-to-bottom on every interaction and can't be imported for testing in the normal sense. Pulling all the actual logic — SMILES parsing, docking box calculation, synergy verdict thresholds, the NL query parser — into a Streamlit-free module means it can be tested directly, and `app.py` is reduced to what it should be: a thin rendering layer.
+## The problem
 
-## Model
+Drug combination screening is expensive. Labs test thousands of pairs in cell culture to find which ones actually synergize. Most computational tools shortcut this by predicting synergy from SMILES strings alone — treating molecules as text, with no sense of where a drug actually sits on its target or what that target does biologically.
 
-**ProteinSynergyDockV2** — a GATv2-based graph neural network:
-- Each drug is encoded as a molecular graph (atoms as nodes, bonds as edges) via a 2-layer GATv2 encoder
-- Cross-drug attention fuses the two drug embeddings
-- FiLM conditioning injects Gene Ontology pathway context
-- Real AutoDock Vina docking scores (not just structural features) feed into the final prediction head
-- Cell-line embeddings let the same drug pair predict differently across 60 cancer types
+Two drugs that bind the same pocket compete, not synergize. Two drugs that bind complementary sites on the same protein, or hit complementary pathways, often do. This geometric and functional context is exactly what most synergy-prediction tools ignore — and it's also where a prediction has to stop being just a number if it's ever going to be useful to anyone outside a research notebook.
 
-Trained checkpoint: Pearson r and AUROC reported live in the app sidebar, computed on a held-out split of NCI ALMANAC.
+## What this does
 
-## Features
+Give it two drugs, a cancer cell line, and a target protein. It:
+
+1. Fetches the protein crystal structure from RCSB and computes a real binding pocket
+2. Runs AutoDock Vina docking for both drugs independently — real pose search, real binding affinities
+3. Builds 3D molecular graphs for each drug (RDKit conformer generation → GATv2 graph encoder)
+4. Predicts synergy via a cross-drug attention GNN conditioned on cell line identity and GO-derived protein context
+5. Quantifies prediction uncertainty using Monte Carlo Dropout (20 stochastic forward passes, Gal & Ghahramani 2016)
+6. Renders both docked poses inside the protein in interactive 3D
+7. Exposes the result as a spec-compliant **FHIR R4 `DiagnosticReport`** — the same resource format used by EHR platforms like Oracle Health (Cerner) and Epic — both inline in the app and via a public REST API
+
+## Eleven analysis modes, one model
 
 | Tab | What it does |
 |---|---|
-| Predict Synergy | Real-time docking + synergy prediction for any drug pair against any PDB structure |
-| Synergy Landscape | Full heatmap of precomputed pairwise synergy across a cancer panel |
-| Cell Line Comparison | How one drug pair's synergy varies across all 9 cancer panels |
-| Clinical Trials | Live ClinicalTrials.gov search for a given drug combination |
-| Literature | Live PubMed search for supporting publications |
-| Drug Repurposing | Best synergy partners for a given anchor drug |
-| Mechanism Explorer | Pathway/target-based rationale for why a combination should or shouldn't synergize |
-| Resistance Mutations | Binding affinity delta between wild-type and mutant protein for known resistance variants (e.g. EGFR T790M, BRAF V600E) |
-| 4D Trajectory | Simulated binding approach trajectory with energy profile |
-| Natural Language Query | Rule-based parser over precomputed synergy data — no API key required |
-| Polypharmacology Network | Systems-level view of drug-pathway relationships across the full panel, not just pairwise |
+| 🔬 Predict Synergy | Real-time docking + GNN prediction with uncertainty quantification |
+| 🌐 Synergy Landscape | Precomputed 28×28 synergy matrices across 9 cancer panels |
+| 📊 Cell Line Comparison | Same drug pair, synergy across different cancer contexts |
+| 🏥 Clinical Trials | Live clinical trial search for predicted combinations |
+| 📚 Literature | PubMed mining for supporting evidence |
+| 💊 Drug Repurposing | Surfaces non-obvious high-synergy pairs |
+| ⚙️ Mechanism Explorer | Pathway-level rationale for why a pair should/shouldn't synergize |
+| 🧬 Resistance Mutations | Synergy prediction under known resistance mutations (BRAF, EGFR, ALK, BCR-ABL) |
+| 🎬 4D Trajectory | Time-evolved docking trajectory visualization |
+| 💬 Query | Natural-language interface over precomputed synergy data |
+| 🕸️ Polypharmacology Network | Systems-level pathway/drug interaction graph |
+| 🏥 Clinical Interop (FHIR) | Converts a live prediction into a FHIR R4 `DiagnosticReport`, with an append-only audit trail |
 
-## Running tests
+## Model
 
-```bash
-pip install -r requirements.txt
-pip install pytest
-pytest tests/ -v
-```
+**ProteinSynergyDockV2** — GATv2 drug encoder, cross-drug multi-head attention, FiLM-conditioned GO context, learned cell line embeddings (60 NCI-60 lines), ~1.87M parameters.
 
-202 tests, covering:
-- Every drug's SMILES string parses to a valid molecule (regression test for the SMILES incident above)
-- Docking binding-box calculation correctly excludes water molecules from the ligand centroid
-- Synergy verdict threshold boundaries are exact and documented
-- Every drug referenced in the resistance mutation database is actually selectable in the UI
-- The natural language query parser doesn't crash on empty/gibberish input and correctly filters by cancer type and drug mentions
+| Metric | Value |
+|---|---|
+| Pearson r (held-out) | 0.5667 |
+| AUROC | 0.7946 |
+| Training data | 107,103 NCI ALMANAC triplets |
+| Real docking scores | 842 AutoDock Vina runs across 20 cancer targets |
+| Cell lines | 60 (full NCI-60 panel) |
 
-## Known limitations
+Held-out evaluation methodology and full results: [`heldout_results.json`](heldout_results.json), [`BENCHMARK.md`](BENCHMARK.md).
 
-- Synergy verdict thresholds (`>0.5` strong, `>0.1` mild, `>-0.1` additive) are heuristic cutoffs, not derived from a calibration study — documented as such in the app's "How to interpret" expander
-- Predictions are point estimates with no uncertainty quantification yet (see Roadmap)
-- Docking uses a single AutoDock Vina run per drug rather than ensemble pose averaging
+## Clinical interoperability layer
 
-## Roadmap
+Most drug-discovery ML projects stop at a prediction number. Real clinical software has to expose that prediction in a format other systems can actually consume, validate inputs against real clinical data shapes instead of trusting arbitrary strings, and keep an auditable record of what was predicted, when, and for whom.
 
-- [ ] Monte Carlo dropout for prediction uncertainty (mean ± std instead of point estimate)
-- [ ] Benchmark against published synergy models (DeepSynergy, MatchMaker) on identical held-out splits
-- [ ] Dose-response synergy surface prediction (Bliss/Loewe) instead of single-point synergy score
+This app implements all three:
 
-## Links
+- **FHIR R4 resources** (`core_fhir.py`) — predictions are returned as `DiagnosticReport` + `Observation` resources; invalid input returns a spec-correct `OperationOutcome` instead of a stack trace or a silently wrong answer
+- **Hash-chained audit log** (`audit_log.py`) — every prediction, successful or rejected, is recorded in an append-only log with cryptographic chaining; `verify_chain()` detects any post-hoc tampering
+- **Input validation against real clinical data shapes** — cell line identifiers are checked against the actual NCI-60 nomenclature, not just "is this a non-empty string"
+- **Standalone public API** (`api.py`, deployed on Render) — `POST /fhir/DiagnosticReport` runs live model inference and returns FHIR JSON; full interactive docs at [`/docs`](https://proteinsynergydock-fhir-api.onrender.com/docs)
 
-- [Live app](https://proteinsynergydock-app-kddtbdmnkixw9c8jfnf8un.streamlit.app/)
-- [Model repo](https://github.com/Aprameya05/ProteinSynergyDock)
-- Related: [ProteinWhisper](https://github.com/Aprameya05/ProteinWhisper) (zero-shot protein function annotation), [DrugSynergy3D](https://github.com/Aprameya05/DrugSynergy3D) (SE(3)-equivariant synergy GNN)
+## Examples to try
+
+| Drug A | Drug B | PDB ID | Expected result |
+|---|---|---|---|
+| Vemurafenib | Trametinib | 3OG7 | ✅ Strongly synergistic (BRAF+MEK, FDA approved) |
+| Imatinib | Dasatinib | 2HYY | ❌ Antagonistic (both compete for ABL1 ATP pocket) |
+| Erlotinib | Lapatinib | 1IVO | ✅ Synergistic (dual EGFR inhibition) |
+| Olaparib | Rucaparib | 4DQY | ⚠️ Mildly synergistic (complementary PARP1 inhibition) |
+
+SMILES for all examples are pre-loaded via the showcase dropdown.
+
+## Engineering
+
+- **266 automated tests** across model logic, chemistry validation, FHIR resource construction, audit log integrity, and the API layer — run on every push via GitHub Actions across Python 3.10 and 3.11
+- Business logic separated from UI (`core.py`) so it's testable without a running Streamlit session
+- SMILES for all 35+ drugs validated with RDKit on every CI run — no invalid molecules can merge
+- Standalone FHIR/API layer (`core_fhir.py`, `audit_log.py`, `model_bridge.py`, `api.py`) with its own test suite, independently deployable from the Streamlit app
+
+## Limitations
+
+This is a research tool, not a clinical diagnostic. Specific known limitations:
+
+- Held-out Pearson r of 0.5667 reflects genuine difficulty in synergy prediction from limited real docking data (842 Vina runs against 107K training triplets) — most synergy is predicted from learned chemical/biological priors, not per-pair docking
+- GO embeddings used in the live prediction path are a fixed-size placeholder, not per-protein computed embeddings
+- The public FHIR API does not run live AutoDock Vina docking (too slow for a synchronous HTTP request) — `docking_affinity` is omitted from API responses unless explicitly supplied
+- Not FDA-reviewed, not validated against real-world clinical outcomes
+
+## Stack
+
+- Docking: AutoDock Vina 1.2.7 + OpenBabel
+- Drug encoding: RDKit + PyTorch Geometric (GATv2)
+- Interoperability: hand-built FHIR R4 resource construction (no external FHIR SDK dependency), FastAPI
+- Visualization: py3Dmol, Plotly
+- Frontend: Streamlit
+- CI: GitHub Actions (pytest, multi-version matrix)
+- API hosting: Render
+
+## Related
+
+- [ProteinSynergyDock](https://github.com/Aprameya05/ProteinSynergyDock) — training code and model weights
+- [ProteinWhisper](https://github.com/Aprameya05/ProteinWhisper) — protein function encoder (zero-shot GO annotation)
+- [DrugSynergy3D](https://github.com/Aprameya05/DrugSynergy3D) — SE(3)-equivariant synergy prediction
