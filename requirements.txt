@@ -1,7 +1,7 @@
 streamlit
 torch
 torch-geometric
-rdkit-pypi
+rdkit
 py3Dmol
 numpy
 requests
