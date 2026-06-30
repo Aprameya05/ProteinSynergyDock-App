@@ -102,6 +102,7 @@ from core import (
     lookup_known, smiles_to_graph, fetch_pdb, get_protein_info,
     get_binding_box, find_vina, prepare_ligand, prepare_receptor,
     run_vina, read_pose, pose_block, get_verdict, parse_nl_query,
+    predict_with_uncertainty, confidence_label,
 )
 
 def show_3d(pdb,pa,pb,na,nb,h=500):
@@ -210,6 +211,8 @@ with tab1:
         if dcl not in clp: dcl=clp[0]
         cell_line=st.selectbox("Cell line:",clp,index=clp.index(dcl),key="cl_sel")
         exhaustiveness=st.slider("Docking exhaustiveness",4,16,8,2,key="exh_sl")
+        mc_samples=st.slider("Uncertainty samples (MC Dropout)",5,50,20,5,key="mc_sl",
+            help="More samples = more stable confidence estimate, but slower. The model runs this many stochastic forward passes instead of one, so the reported synergy score comes with a standard deviation instead of being a single number.")
         run_btn=st.button("🔬 Run Docking + Predict Synergy",type="primary",key="run_btn")
     with col2:
         st.markdown("### 🔭 3D Visualization")
@@ -279,16 +282,16 @@ with tab1:
             st.session_state['panel']=panel; st.session_state['cell_line']=cell_line
             st.session_state['pdb_id']=pdb_id
             prog.progress(75)
-            with stat: st.write("🧠 Predicting synergy...")
+            with stat: st.write(f"🧠 Predicting synergy ({mc_samples} stochastic samples for uncertainty)...")
             go_emb=torch.zeros(512).unsqueeze(0); dock=torch.tensor([[float(dsa),float(dsb)]])
-            with torch.no_grad():
-                if model_version=='v2' and cell_to_idx:
-                    cidx=torch.tensor([cell_to_idx.get(cell_line,0)],dtype=torch.long)
-                    score,logit=model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),go_emb,dock,cidx)
-                else:
-                    score,logit=model(Batch.from_data_list([ga]),Batch.from_data_list([gb]),go_emb,dock)
-                syn=score.item(); prob=torch.sigmoid(logit).item()
+            uq = predict_with_uncertainty(
+                model, model_version, cell_to_idx, ga, gb, go_emb, dock,
+                cell_line, Batch, n_samples=mc_samples
+            )
+            syn = uq["mean_synergy"]; syn_std = uq["std_synergy"]
+            prob = uq["mean_prob"]; prob_std = uq["std_prob"]
             st.session_state['syn_score']=syn; st.session_state['syn_prob']=prob
+            st.session_state['syn_std']=syn_std; st.session_state['syn_samples']=uq["synergy_samples"]
             prog.progress(100)
             with stat: st.write("✅ Complete!")
             with viz.container():
@@ -300,13 +303,31 @@ with tab1:
                     show_drugs(smiles_a,smiles_b)
             st.markdown("---\n### 📊 Results")
             verdict,color=get_verdict(syn)
+            conf_label,conf_color=confidence_label(syn_std)
             st.session_state['verdict']=verdict
             m1,m2,m3,m4=st.columns(4)
-            m1.metric("Synergy Score",f"{syn:.3f}"); m2.metric("Synergy Probability",f"{prob:.3f}")
+            m1.metric("Synergy Score",f"{syn:.3f} ± {syn_std:.3f}")
+            m2.metric("Synergy Probability",f"{prob:.3f} ± {prob_std:.3f}")
             m3.metric(f"{name_a or 'Drug A'} Binding",f"{dsa:.2f} kcal/mol")
             m4.metric(f"{name_b or 'Drug B'} Binding",f"{dsb:.2f} kcal/mol")
             st.markdown(f"### Verdict: :{color}[{verdict}]")
+            st.markdown(f"**Confidence:** :{conf_color}[{conf_label}]  *(std over {mc_samples} stochastic MC Dropout samples)*")
             st.caption(f"Cancer context: **{panel}** → **{cell_line}**")
+
+            with st.expander("📈 Uncertainty distribution (MC Dropout samples)"):
+                st.markdown(f"""The score above (`{syn:.3f}`) is the **mean** of {mc_samples} stochastic forward passes
+through the model with dropout kept active at inference time — a standard technique (Gal & Ghahramani, 2016)
+for approximating Bayesian uncertainty without retraining or building a separate ensemble. A tight, narrow
+distribution means the model consistently lands near the same prediction regardless of which neurons get
+randomly dropped; a wide spread means the model itself is uncertain about this specific drug pair.""")
+                hist_fig=go.Figure(go.Histogram(x=uq["synergy_samples"],nbinsx=15,marker_color='#4fc3f7'))
+                hist_fig.add_vline(x=syn,line_dash="dash",line_color="#FFD700",annotation_text=f"mean={syn:.3f}")
+                hist_fig.update_layout(title="Distribution of synergy predictions across MC Dropout samples",
+                    xaxis_title="Predicted synergy score",yaxis_title="Count",template="plotly_dark",height=300,
+                    paper_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(hist_fig,use_container_width=True)
+                st.caption(f"This distribution is a real diagnostic, not decoration — if it's bimodal or very wide, treat the point estimate with caution and consider it alongside the docking scores and known-pathway rationale (Mechanism Explorer tab) rather than at face value.")
+
             st.session_state.history.insert(0,{'drug_a':name_a or 'Drug A','drug_b':name_b or 'Drug B',
                 'cell_line':cell_line,'score':syn,'verdict':verdict,'dock_a':dsa,'dock_b':dsb})
             st.session_state.history=st.session_state.history[:5]
@@ -326,7 +347,9 @@ Known: <strong>{ks:.2f}</strong> ({ksc}) | Predicted: <strong>{syn:.3f}</strong>
 | {name_b or 'Drug B'} docking | {dsb:.3f} kcal/mol |
 | Cancer type | {panel} |
 | Cell line | {cell_line} |
-| Synergy score | {syn:.3f} |
+| Synergy score (mean) | {syn:.3f} |
+| Synergy score (std, {mc_samples} MC samples) | {syn_std:.3f} |
+| Confidence | {conf_label} |
 | Verdict | {verdict} |""")
             with st.expander("📖 How to interpret"):
                 st.markdown("""| Score | Meaning |
@@ -336,7 +359,16 @@ Known: <strong>{ks:.2f}</strong> ({ksc}) | Predicted: <strong>{syn:.3f}</strong>
 | -0.1–0.1 | Approximately Additive |
 | < -0.1 | Antagonistic |
 
-**Docking score**: more negative = stronger binding. Below -8 = strong binder.""")
+**Docking score**: more negative = stronger binding. Below -8 = strong binder.
+
+**Confidence bands** (standard deviation across MC Dropout samples):
+| Std | Meaning |
+|-----|---------|
+| < 0.15 | High confidence — model consistently lands near the same prediction |
+| 0.15–0.4 | Moderate confidence — some spread across samples |
+| > 0.4 | Low confidence — treat the point estimate with caution |
+
+These thresholds are heuristic, the same way the synergy verdict bands are — they are not a calibrated probability guarantee, but they are a real signal: a wide MC Dropout spread genuinely means the model's internal representations disagree with each other on this input, which is exactly the situation where independent verification (literature search, clinical trial data, or wet-lab follow-up) matters most.""")
 
     if st.session_state.get('pa') or st.session_state.get('pb'):
         st.markdown("---")

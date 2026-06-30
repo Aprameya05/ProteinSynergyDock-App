@@ -407,3 +407,84 @@ def parse_nl_query(query, sc_data):
             for _, row in top.iterrows():
                 result += f"🟢 **{row['drug1']} + {row['drug2']}** (`{row['panel']}`): `{row['score']:.3f}`\n"
         return result
+
+
+def _enable_mc_dropout(model):
+    """Sets only nn.Dropout submodules to train() mode (so they remain
+    stochastic at inference time) while leaving every other layer
+    (LayerNorm, Linear, GATv2Conv, etc.) in eval() mode.
+
+    This is the key correctness detail of MC Dropout: naively calling
+    model.train() on the whole model would also put any BatchNorm layers
+    into training-statistics mode, which corrupts predictions. Since this
+    architecture uses LayerNorm (not BatchNorm), that specific failure
+    mode doesn't apply here, but selectively toggling only Dropout layers
+    is the technically correct and architecture-agnostic approach, so
+    this implementation stays correct even if BatchNorm is added later.
+    """
+    for module in model.modules():
+        if module.__class__.__name__.startswith('Dropout'):
+            module.train()
+
+
+def predict_with_uncertainty(model, model_version, cell_to_idx, ga, gb, go_emb, dock,
+                              cell_line, batch_cls, n_samples=20):
+    """Runs n_samples stochastic forward passes with MC Dropout enabled and
+    returns (mean_synergy, std_synergy, mean_prob, std_prob, all_synergy_samples).
+
+    This converts a single point-estimate prediction into a distribution,
+    giving a principled uncertainty estimate (Gal & Ghahramani, 2016 —
+    dropout as a Bayesian approximation) without requiring model retraining
+    or an ensemble of separately-trained models.
+
+    Parameters mirror the existing single-shot inference call site in
+    app.py exactly, so this is a drop-in replacement, not a new code path
+    that has to be kept in sync with the original.
+    """
+    import torch as _torch
+
+    model.eval()  # baseline: everything in eval mode...
+    _enable_mc_dropout(model)  # ...then re-enable just the Dropout layers
+
+    synergy_samples = []
+    prob_samples = []
+
+    with _torch.no_grad():
+        for _ in range(n_samples):
+            if model_version == 'v2' and cell_to_idx:
+                cidx = _torch.tensor([cell_to_idx.get(cell_line, 0)], dtype=_torch.long)
+                score, logit = model(batch_cls.from_data_list([ga]), batch_cls.from_data_list([gb]), go_emb, dock, cidx)
+            else:
+                score, logit = model(batch_cls.from_data_list([ga]), batch_cls.from_data_list([gb]), go_emb, dock)
+            synergy_samples.append(score.item())
+            prob_samples.append(_torch.sigmoid(logit).item())
+
+    model.eval()  # restore full eval mode for any subsequent normal inference
+
+    import numpy as _np
+    synergy_samples = _np.array(synergy_samples)
+    prob_samples = _np.array(prob_samples)
+
+    return {
+        "mean_synergy": float(synergy_samples.mean()),
+        "std_synergy": float(synergy_samples.std()),
+        "mean_prob": float(prob_samples.mean()),
+        "std_prob": float(prob_samples.std()),
+        "synergy_samples": synergy_samples.tolist(),
+        "n_samples": n_samples,
+    }
+
+
+def confidence_label(std_synergy):
+    """Maps prediction standard deviation to a human-readable confidence
+    band. Thresholds are heuristic (like the existing get_verdict bands)
+    and should be read as relative confidence, not a calibrated probability.
+    """
+    if std_synergy < 0.15:
+        return "🟢 High confidence", "green"
+    elif std_synergy < 0.4:
+        return "🟡 Moderate confidence", "orange"
+    else:
+        return "🔴 Low confidence — model is uncertain about this pair", "red"
+        
+
