@@ -36,6 +36,7 @@ jobs:
           pip install rdkit numpy pandas requests
           pip install torch --quiet
           pip install torch_geometric --quiet
+          pip install fastapi uvicorn httpx pydantic
 
       - name: Run test suite
         run: pytest tests/ -v --tb=short
