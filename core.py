@@ -9,6 +9,9 @@ the exact code path the deployed app runs.
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GATv2Conv, global_mean_pool
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from torch_geometric.data import Data
@@ -16,7 +19,52 @@ import os
 import requests
 import shutil
 import subprocess
+# ── Model definitions ──────────────────────────────────────────────────────────
+class DrugEncoder(nn.Module):
+    def __init__(self,in_dim=7,hidden=128,out_dim=256,heads=4):
+        super().__init__()
+        self.proj=nn.Linear(in_dim,hidden)
+        self.conv1=GATv2Conv(hidden,hidden,heads=heads,concat=True)
+        self.conv2=GATv2Conv(hidden*heads,out_dim,heads=1,concat=False)
+        self.norm1=nn.LayerNorm(hidden*heads); self.norm2=nn.LayerNorm(out_dim)
+    def forward(self,x,edge_index,batch):
+        x=F.gelu(self.proj(x)); x=F.gelu(self.norm1(self.conv1(x,edge_index)))
+        x=F.gelu(self.norm2(self.conv2(x,edge_index))); return global_mean_pool(x,batch)
 
+class CrossDrugAttention(nn.Module):
+    def __init__(self,dim=256):
+        super().__init__()
+        self.attn=nn.MultiheadAttention(dim,num_heads=4,batch_first=True)
+        self.norm=nn.LayerNorm(dim); self.ff=nn.Sequential(nn.Linear(dim,dim*2),nn.GELU(),nn.Linear(dim*2,dim))
+    def forward(self,a,b):
+        seq=torch.stack([a,b],dim=1); att,_=self.attn(seq,seq,seq)
+        seq=self.norm(seq+att); return (seq+self.ff(seq)).reshape(seq.shape[0],-1)
+
+class ProteinSynergyDockV2(nn.Module):
+    def __init__(self,go_dim=512,drug_dim=256,hidden=512,n_cell_lines=60):
+        super().__init__()
+        self.drug_encoder=DrugEncoder(7,128,drug_dim)
+        self.cross_attn=CrossDrugAttention(drug_dim)
+        self.film_scale=nn.Linear(go_dim,drug_dim*2); self.film_bias=nn.Linear(go_dim,drug_dim*2)
+        self.cell_embed=nn.Embedding(n_cell_lines,32)
+        self.head=nn.Sequential(nn.Linear(drug_dim*2+2+32,hidden),nn.LayerNorm(hidden),nn.ReLU(),nn.Dropout(0.2),
+            nn.Linear(hidden,hidden//2),nn.ReLU(),nn.Dropout(0.1),nn.Linear(hidden//2,2))
+    def forward(self,da,db,go_emb,dock,cell_idx):
+        ea=self.drug_encoder(da.x,da.edge_index,da.batch); eb=self.drug_encoder(db.x,db.edge_index,db.batch)
+        fused=self.cross_attn(ea,eb); fused=fused*(1+self.film_scale(go_emb))+self.film_bias(go_emb)
+        fused=torch.cat([fused,dock,self.cell_embed(cell_idx)],dim=-1); out=self.head(fused); return out[:,0],out[:,1]
+
+class ProteinSynergyDockV1(nn.Module):
+    def __init__(self,go_dim=512,drug_dim=256,hidden=512):
+        super().__init__()
+        self.drug_encoder=DrugEncoder(7,128,drug_dim); self.cross_attn=CrossDrugAttention(drug_dim)
+        self.film_scale=nn.Linear(go_dim,drug_dim*2); self.film_bias=nn.Linear(go_dim,drug_dim*2)
+        self.head=nn.Sequential(nn.Linear(drug_dim*2+2,hidden),nn.LayerNorm(hidden),nn.ReLU(),nn.Dropout(0.2),
+            nn.Linear(hidden,hidden//2),nn.ReLU(),nn.Dropout(0.1),nn.Linear(hidden//2,2))
+    def forward(self,da,db,go_emb,dock):
+        ea=self.drug_encoder(da.x,da.edge_index,da.batch); eb=self.drug_encoder(db.x,db.edge_index,db.batch)
+        fused=self.cross_attn(ea,eb); fused=fused*(1+self.film_scale(go_emb))+self.film_bias(go_emb)
+        fused=torch.cat([fused,dock],dim=-1); out=self.head(fused); return out[:,0],out[:,1]
 KNOWN_SYNERGY={
     ("Vemurafenib","Trametinib"):{"UACC-62":8.4,"SK-MEL-5":7.2,"A375":9.1},
     ("Trametinib","Vemurafenib"):{"UACC-62":8.4,"SK-MEL-5":7.2,"A375":9.1},
