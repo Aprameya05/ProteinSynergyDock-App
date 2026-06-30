@@ -59,6 +59,9 @@ from core import (
     run_vina, read_pose, pose_block, get_verdict, parse_nl_query,
     predict_with_uncertainty, confidence_label,
 )
+from model_bridge import predict_synergy, ModelUnavailableError
+from core_fhir import predict_to_fhir
+from audit_log import AuditLog
 
 def show_3d(pdb,pa,pb,na,nb,h=500):
     v=py3Dmol.view(width=750,height=h)
@@ -125,13 +128,12 @@ with st.sidebar:
 {h['cell_line']} | Score: {h['score']:.3f} | {h['verdict'].split()[0]}</div>""", unsafe_allow_html=True)
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11 = st.tabs([
+tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11,tab12 = st.tabs([
     "🔬 Predict Synergy","🌐 Synergy Landscape","📊 Cell Line Comparison",
     "🏥 Clinical Trials","📚 Literature","💊 Drug Repurposing",
     "⚙️ Mechanism Explorer","🧬 Resistance Mutations","🎬 4D Trajectory","💬 Query",
-    "🕸️ Polypharmacology Network"
+    "🕸️ Polypharmacology Network","🏥 Clinical Interop"
 ])
-
 # ═══ TAB 1 ════════════════════════════════════════════════════════════════════
 with tab1:
     col1,col2=st.columns([1,1.2])
@@ -877,3 +879,57 @@ other drugs sharing those pathways. Pairwise tabs show one combination at a time
         })
     if summary_rows:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+        # ═══ TAB 12: CLINICAL INTEROPERABILITY (FHIR) ════════════════════════════════
+with tab12:
+    st.header("🏥 Clinical Interoperability (FHIR R4)")
+    st.markdown(
+        "Most drug-discovery ML tools stop at a prediction number. Real clinical "
+        "software has to expose that prediction in a format other healthcare "
+        "systems can consume — that's what FHIR (Fast Healthcare Interoperability "
+        "Resources) is for. This tab converts a live model prediction into a "
+        "spec-compliant FHIR `DiagnosticReport`, the same shape used by EHR "
+        "platforms like Oracle Health (Cerner) and Epic."
+    )
+
+    fhir_col1, fhir_col2, fhir_col3 = st.columns(3)
+    with fhir_col1:
+        fhir_drug_a = st.selectbox("Drug A", sorted(DRUG_SMILES_LOOKUP.keys()),
+            index=sorted(DRUG_SMILES_LOOKUP.keys()).index("Olaparib"), key="fhir_drug_a")
+    with fhir_col2:
+        fhir_drug_b = st.selectbox("Drug B", sorted(DRUG_SMILES_LOOKUP.keys()),
+            index=sorted(DRUG_SMILES_LOOKUP.keys()).index("Rucaparib"), key="fhir_drug_b")
+    with fhir_col3:
+        fhir_cell_line = st.text_input("Cell line (NCI-60)", value="OVCAR-3", key="fhir_cell_line")
+
+    if st.button("🧬 Generate FHIR DiagnosticReport", key="fhir_generate_btn"):
+        with st.spinner("Running model inference..."):
+            try:
+                score, confidence, affinity = predict_synergy(fhir_drug_a, fhir_drug_b, fhir_cell_line)
+                resource, success = predict_to_fhir(
+                    drug_a=fhir_drug_a, drug_b=fhir_drug_b, cell_line=fhir_cell_line,
+                    synergy_score=score, confidence=confidence, docking_affinity=affinity,
+                )
+            except ModelUnavailableError as e:
+                st.error(f"Model error: {e}")
+                resource, success = None, False
+
+        if resource:
+            audit = AuditLog(path="audit_log.jsonl")
+            audit.record(
+                drug_a=fhir_drug_a, drug_b=fhir_drug_b, cell_line=fhir_cell_line,
+                output_resource_type=resource["resourceType"],
+                output_summary=resource.get("conclusion", str(resource.get("issue"))),
+                model_version="ProteinSynergyDockV2-epoch82",
+                success=success, user="streamlit-user",
+            )
+            if success:
+                st.success("Valid FHIR DiagnosticReport generated.")
+            else:
+                st.warning("Input failed validation — FHIR OperationOutcome returned instead.")
+            st.json(resource)
+
+    st.markdown("---")
+    st.caption(
+        "🔗 Live API: this same logic is also exposed as a public REST endpoint at "
+        "[proteinsynergydock-fhir-api.onrender.com/docs](https://proteinsynergydock-fhir-api.onrender.com/docs)"
+    )
