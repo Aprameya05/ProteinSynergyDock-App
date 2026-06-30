@@ -34,9 +34,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install pytest
           pip install rdkit numpy pandas requests
-          # CPU-only torch to keep CI fast — full app uses whatever requirements.txt pins
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install torch_geometric
+          pip install torch --quiet
+          pip install torch_geometric --quiet
 
       - name: Run test suite
         run: pytest tests/ -v --tb=short

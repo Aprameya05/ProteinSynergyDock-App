@@ -1,0 +1,30 @@
+{
+  "random_split": {
+    "pearson_r": 0.5667,
+    "auroc": 0.7946,
+    "note": "original training run, epoch 82"
+  },
+  "heldout_split": {
+    "pearson_r": 0.46631816029548645,
+    "auroc": 0.7548729660647572,
+    "n_test_samples": 20903,
+    "heldout_cell_lines": [
+      "786-0",
+      "CAKI-1",
+      "HCT-15",
+      "HL-60(TB)",
+      "NCI-H522",
+      "OVCAR-4",
+      "SK-MEL-2",
+      "SK-MEL-28",
+      "SK-OV-3",
+      "SNB-19",
+      "T-47D",
+      "UACC-257"
+    ],
+    "n_heldout_cell_lines": 12,
+    "n_train_samples": 77607,
+    "n_val_samples": 8593
+  },
+  "generalization_gap_pearson_r": 0.10038183970451353
+}
