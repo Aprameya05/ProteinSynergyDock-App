@@ -19,6 +19,11 @@ st.markdown("""<style>
 .known-score{background:#1e3a1e;border-left:4px solid #4caf50;padding:12px;border-radius:6px;margin:8px 0;color:white;}
 .unknown-score{background:#2a2a1e;border-left:4px solid #ff9800;padding:12px;border-radius:6px;margin:8px 0;color:white;}
 .history-item{background:#1a1a2e;border-left:3px solid #4fc3f7;padding:8px;border-radius:4px;margin:4px 0;color:white;font-size:12px;}
+/* Make the tab bar wrap onto multiple rows instead of requiring horizontal scroll */
+.stTabs [data-baseweb="tab-list"]{flex-wrap:wrap;gap:4px;row-gap:6px;}
+.stTabs [data-baseweb="tab"]{height:auto;white-space:normal;padding:8px 14px;font-size:14px;}
+.stTabs [data-baseweb="tab-highlight"]{display:none;}
+.stTabs [data-baseweb="tab-border"]{display:none;}
 </style>""", unsafe_allow_html=True)
 
 # ── Model definitions ──────────────────────────────────────────────────────────
@@ -885,4 +890,3 @@ other drugs sharing those pathways. Pairwise tabs show one combination at a time
         })
     if summary_rows:
         st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
-
