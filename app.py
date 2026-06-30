@@ -577,7 +577,7 @@ with tab1:
             name_b=st.text_input("Drug B name",value=ex.get("name_b",""),placeholder="e.g. Dasatinib",key="name_b_inp")
             smiles_b=st.text_area("Drug B — SMILES",value=ex["smiles_b"],height=80,key="smb_inp")
         st.markdown("### 🧫 Target Protein")
-        pdb_id=st.text_input("PDB ID",value=ex.get("pdb_id",""),placeholder="e.g. 2HYY",key="pdb_inp").strip().upper()
+        pdb_id=st.text_input("PDB ID",value=ex.get("pdb_id",""),placeholder="e.g. 2HYY",key=f"pdb_inp_{example}").strip().upper()
         if pdb_id: st.caption(f"Will fetch: https://files.rcsb.org/download/{pdb_id}.pdb")
         st.markdown("### 🏥 Cancer Context")
         panel=st.selectbox("Cancer type:",list(CANCER_PANELS.keys()),
