@@ -559,7 +559,8 @@ with tab1:
     with col1:
         st.markdown("### 💊 Drug Inputs")
         dao=["Custom (paste SMILES below)"]+sorted(DRUG_SMILES_LOOKUP.keys())
-        das=st.selectbox("Drug A — select known drug",dao,key="da_select")
+        default_a_idx = dao.index(ex["name_a"]) if ex.get("name_a") in dao else 0
+        das=st.selectbox("Drug A — select known drug",dao,index=default_a_idx,key=f"da_select_{example}")
         if das!="Custom (paste SMILES below)":
             smiles_a=DRUG_SMILES_LOOKUP[das]; name_a=das
             st.text_area("Drug A SMILES",value=smiles_a,height=60,disabled=True,key="sma_disp")
@@ -567,7 +568,8 @@ with tab1:
             name_a=st.text_input("Drug A name",value=ex.get("name_a",""),placeholder="e.g. Imatinib",key="name_a_inp")
             smiles_a=st.text_area("Drug A — SMILES",value=ex["smiles_a"],height=80,key="sma_inp")
         dbo=["Custom (paste SMILES below)"]+sorted(DRUG_SMILES_LOOKUP.keys())
-        dbs=st.selectbox("Drug B — select known drug",dbo,key="db_select")
+        default_b_idx = dbo.index(ex["name_b"]) if ex.get("name_b") in dbo else 0
+        dbs=st.selectbox("Drug B — select known drug",dbo,index=default_b_idx,key=f"db_select_{example}")
         if dbs!="Custom (paste SMILES below)":
             smiles_b=DRUG_SMILES_LOOKUP[dbs]; name_b=dbs
             st.text_area("Drug B SMILES",value=smiles_b,height=60,disabled=True,key="smb_disp")
@@ -1008,7 +1010,7 @@ with tab8:
             template="plotly_dark",height=420,
             yaxis=dict(range=[min(df_res["Binding Affinity (kcal/mol)"])-2,0]))
         st.plotly_chart(fig_res,use_container_width=True)
-        st.dataframe(df_res.style.applymap(
+        st.dataframe(df_res.style.map(
             lambda v: "color: #F44336; font-weight: bold" if v=="High" else
                       ("color: #FF9800" if v=="Moderate" else
                        ("color: #4CAF50" if v=="Low" else "")),
