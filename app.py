@@ -21,6 +21,7 @@ st.markdown("""<style>
 .history-item{background:#1a1a2e;border-left:3px solid #4fc3f7;padding:8px;border-radius:4px;margin:4px 0;color:white;font-size:12px;}
 </style>""", unsafe_allow_html=True)
 
+# ── Model definitions ──────────────────────────────────────────────────────────
 class DrugEncoder(nn.Module):
     def __init__(self,in_dim=7,hidden=128,out_dim=256,heads=4):
         super().__init__()
@@ -89,6 +90,7 @@ def load_precomputed():
     return None
 scores_data=load_precomputed()
 
+# ── Data ───────────────────────────────────────────────────────────────────────
 KNOWN_SYNERGY={
     ("Vemurafenib","Trametinib"):{"UACC-62":8.4,"SK-MEL-5":7.2,"A375":9.1},
     ("Trametinib","Vemurafenib"):{"UACC-62":8.4,"SK-MEL-5":7.2,"A375":9.1},
@@ -139,6 +141,7 @@ DRUG_SMILES_LOOKUP={
     "Selumetinib":"Cc1cc(Nc2ncc(F)c(Nc3ccc(I)c(F)c3)n2)c(Cl)cc1Cl",
     "Belinostat":"O=C(/C=C/c1ccccc1)NOc1ccc(NS(=O)(=O)c2ccccc2)cc1",
     "Vorinostat":"O=C(CCCCCCC(=O)Nc1ccccc1)NO",
+    "Crizotinib":"Cc1cn(C2CCNCC2)c2cc(Nc3ccc(F)cc3Cl)cnc12",
 }
 
 CANCER_PANELS={
@@ -217,6 +220,38 @@ SYNERGY_RULES={
     ("Nucleotide synthesis","DNA damage"):"✅ Synergistic — complementary DNA depletion and damage mechanisms.",
 }
 
+MUTATION_DB = {
+    "BRAF": {
+        "wild_type": "7MNX",
+        "mutations": {
+            "V600E": {"pdb": "6PP9", "description": "Most common BRAF mutation (~50% melanomas). Vemurafenib targets this.", "drugs_affected": ["Vemurafenib", "Dabrafenib"]},
+            "V600K": {"pdb": "6P7J", "description": "Second most common BRAF mutation. Reduced sensitivity to Vemurafenib.", "drugs_affected": ["Vemurafenib"]},
+        }
+    },
+    "EGFR": {
+        "wild_type": "1IVO",
+        "mutations": {
+            "T790M": {"pdb": "3UG2", "description": "Gatekeeper mutation — primary resistance to gefitinib/erlotinib.", "drugs_affected": ["Erlotinib", "Gefitinib", "Osimertinib"]},
+            "L858R": {"pdb": "2ITX", "description": "Activating mutation — sensitizing, increases drug binding.", "drugs_affected": ["Erlotinib", "Gefitinib"]},
+        }
+    },
+    "ALK": {
+        "wild_type": "2XP2",
+        "mutations": {
+            "G1202R": {"pdb": "6MXM", "description": "Solvent-front mutation causing broad resistance to ALK inhibitors.", "drugs_affected": ["Crizotinib", "Alectinib"]},
+            "L1196M": {"pdb": "4ANS", "description": "Gatekeeper mutation. Primary crizotinib resistance mechanism.", "drugs_affected": ["Crizotinib"]},
+        }
+    },
+    "BCR-ABL": {
+        "wild_type": "2HYY",
+        "mutations": {
+            "T315I": {"pdb": "2QOH", "description": "Gatekeeper mutation. Resistant to imatinib, dasatinib, nilotinib.", "drugs_affected": ["Imatinib", "Dasatinib", "Nilotinib"]},
+            "E255K": {"pdb": "2HYY", "description": "P-loop mutation. Moderate resistance to imatinib.", "drugs_affected": ["Imatinib"]},
+        }
+    },
+}
+
+# ── Helper functions ───────────────────────────────────────────────────────────
 def lookup_known(da,db,cl=None):
     k=(da,db)
     if k not in KNOWN_SYNERGY: return None
@@ -387,6 +422,97 @@ def get_verdict(s):
     elif s>-0.1: return "➖ Approximately Additive","blue"
     else: return "❌ Antagonistic","red"
 
+def parse_nl_query(query, sc_data):
+    q = query.lower().strip()
+    CANCER_ALIASES = {
+        "breast": ["MCF7", "MDA-MB-231", "T-47D"],
+        "lung": ["A549", "NCI-H460", "HOP-92"],
+        "leukemia": ["K-562", "CCRF-CEM", "HL-60"],
+        "melanoma": ["UACC-62", "MALME-3M", "SK-MEL-5"],
+        "colon": ["HCT-116", "HT29", "SW-620"],
+        "ovarian": ["OVCAR-3", "IGROV1", "SK-OV-3"],
+        "prostate": ["PC-3", "DU-145"],
+        "cns": ["U251", "SF-268", "SF-295"],
+        "renal": ["A498", "CAKI-1", "SN12C"],
+    }
+    DRUG_LIST = ["Vemurafenib", "Trametinib", "Erlotinib", "Imatinib", "Paclitaxel",
+                 "Venetoclax", "Alpelisib", "Osimertinib", "Lapatinib", "Capecitabine",
+                 "Palbociclib", "Ribociclib", "Dasatinib", "Crizotinib", "Dabrafenib"]
+    if not sc_data:
+        return "⚠️ No precomputed scores loaded. Visit the Synergy Landscape tab first."
+    all_pairs = []
+    for panel, drug_dict in sc_data.items():
+        drugs = drug_dict.get('drugs', [])
+        matrix = drug_dict.get('matrix', [])
+        for i, d1 in enumerate(drugs):
+            for j, d2 in enumerate(drugs):
+                if i != j and matrix:
+                    try:
+                        all_pairs.append({"drug1": d1, "drug2": d2, "panel": panel, "score": float(matrix[i][j])})
+                    except: pass
+    if not all_pairs:
+        return "⚠️ Could not parse scores. Check precomputed_scores.json format."
+    df_all = pd.DataFrame(all_pairs)
+    mentioned_drugs = [d for d in DRUG_LIST if d.lower() in q]
+    detected_cancer = None
+    for cancer in CANCER_ALIASES:
+        if cancer in q:
+            detected_cancer = cancer; break
+    is_antagonistic = any(w in q for w in ["antagonistic", "antagonism", "worst", "avoid", "bad"])
+    is_comparison = any(w in q for w in ["compare", "across", "different", "which cancer"])
+    df_filtered = df_all.copy()
+    if detected_cancer:
+        cancer_lines = CANCER_ALIASES[detected_cancer]
+        mask = df_filtered["panel"].apply(lambda p: any(cl.lower() in p.lower() for cl in cancer_lines))
+        if mask.any():
+            df_filtered = df_filtered[mask]
+    if len(mentioned_drugs) == 2:
+        d1, d2 = mentioned_drugs[0], mentioned_drugs[1]
+        df_drug = df_filtered[
+            ((df_filtered["drug1"]==d1)&(df_filtered["drug2"]==d2)) |
+            ((df_filtered["drug1"]==d2)&(df_filtered["drug2"]==d1))
+        ]
+        if df_drug.empty:
+            return f"❌ No data found for **{d1} + {d2}**. Try the Predict Synergy tab for real-time docking."
+        avg_score = df_drug["score"].mean()
+        label = "🟢 Synergistic" if avg_score > 0.1 else ("🔴 Antagonistic" if avg_score < -0.1 else "🟡 Additive")
+        result = f"**{d1} + {d2}**: Average score = `{avg_score:.3f}` → **{label}**\n\n"
+        for _, row in df_drug.sort_values("score", ascending=False).iterrows():
+            result += f"- {row['panel']}: `{row['score']:.3f}`\n"
+        return result
+    elif len(mentioned_drugs) == 1:
+        drug = mentioned_drugs[0]
+        df_drug = df_filtered[(df_filtered["drug1"]==drug)|(df_filtered["drug2"]==drug)]
+        if df_drug.empty:
+            return f"❌ No data for **{drug}**."
+        if is_comparison:
+            result = f"**{drug}** across cancer types:\n\n"
+            for panel, group in df_drug.groupby("panel"):
+                avg = group["score"].mean()
+                bar = "█" * max(1, int(abs(avg) * 10))
+                result += f"- `{panel}`: {avg:+.3f} {bar}\n"
+            return result
+        partners = df_drug.copy()
+        partners["partner"] = partners.apply(lambda r: r["drug2"] if r["drug1"]==drug else r["drug1"], axis=1)
+        top = partners.groupby("partner")["score"].mean().sort_values(ascending=False)
+        result = f"**Best combinations with {drug}**:\n\n"
+        for partner, score in top.head(5).items():
+            lbl = "🟢" if score > 0.1 else ("🔴" if score < -0.1 else "🟡")
+            result += f"{lbl} **{drug} + {partner}**: `{score:.3f}`\n"
+        return result
+    else:
+        if is_antagonistic:
+            top = df_filtered.nsmallest(8, "score")
+            result = f"**Most antagonistic pairs{' in ' + detected_cancer if detected_cancer else ''}:**\n\n"
+            for _, row in top.iterrows():
+                result += f"🔴 **{row['drug1']} + {row['drug2']}** (`{row['panel']}`): `{row['score']:.3f}`\n"
+        else:
+            top = df_filtered.nlargest(8, "score")
+            result = f"**Most synergistic pairs{' in ' + detected_cancer if detected_cancer else ''}:**\n\n"
+            for _, row in top.iterrows():
+                result += f"🟢 **{row['drug1']} + {row['drug2']}** (`{row['panel']}`): `{row['score']:.3f}`\n"
+        return result
+
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("""<div class="main-header">
 <h1>🧬 ProteinSynergyDock</h1>
@@ -420,11 +546,13 @@ with st.sidebar:
 {h['cell_line']} | Score: {h['score']:.3f} | {h['verdict'].split()[0]}</div>""", unsafe_allow_html=True)
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "🔬 Predict Synergy", "🌐 Synergy Landscape", "📊 Cell Line Comparison",
-    "🏥 Clinical Trials", "📚 Literature", "💊 Drug Repurposing",
-    "⚙️ Mechanism Explorer", "🧬 Resistance Mutations", "🎬 4D Trajectory", "💬 Query"
+tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11 = st.tabs([
+    "🔬 Predict Synergy","🌐 Synergy Landscape","📊 Cell Line Comparison",
+    "🏥 Clinical Trials","📚 Literature","💊 Drug Repurposing",
+    "⚙️ Mechanism Explorer","🧬 Resistance Mutations","🎬 4D Trajectory","💬 Query",
+    "🕸️ Polypharmacology Network"
 ])
+
 # ═══ TAB 1 ════════════════════════════════════════════════════════════════════
 with tab1:
     col1,col2=st.columns([1,1.2])
@@ -434,29 +562,30 @@ with tab1:
         das=st.selectbox("Drug A — select known drug",dao,key="da_select")
         if das!="Custom (paste SMILES below)":
             smiles_a=DRUG_SMILES_LOOKUP[das]; name_a=das
-            st.text_area("Drug A SMILES",value=smiles_a,height=60,disabled=True)
+            st.text_area("Drug A SMILES",value=smiles_a,height=60,disabled=True,key="sma_disp")
         else:
-            name_a=st.text_input("Drug A name",value=ex.get("name_a",""),placeholder="e.g. Imatinib")
-            smiles_a=st.text_area("Drug A — SMILES",value=ex["smiles_a"],height=80)
+            name_a=st.text_input("Drug A name",value=ex.get("name_a",""),placeholder="e.g. Imatinib",key="name_a_inp")
+            smiles_a=st.text_area("Drug A — SMILES",value=ex["smiles_a"],height=80,key="sma_inp")
         dbo=["Custom (paste SMILES below)"]+sorted(DRUG_SMILES_LOOKUP.keys())
         dbs=st.selectbox("Drug B — select known drug",dbo,key="db_select")
         if dbs!="Custom (paste SMILES below)":
             smiles_b=DRUG_SMILES_LOOKUP[dbs]; name_b=dbs
-            st.text_area("Drug B SMILES",value=smiles_b,height=60,disabled=True)
+            st.text_area("Drug B SMILES",value=smiles_b,height=60,disabled=True,key="smb_disp")
         else:
-            name_b=st.text_input("Drug B name",value=ex.get("name_b",""),placeholder="e.g. Dasatinib")
-            smiles_b=st.text_area("Drug B — SMILES",value=ex["smiles_b"],height=80)
+            name_b=st.text_input("Drug B name",value=ex.get("name_b",""),placeholder="e.g. Dasatinib",key="name_b_inp")
+            smiles_b=st.text_area("Drug B — SMILES",value=ex["smiles_b"],height=80,key="smb_inp")
         st.markdown("### 🧫 Target Protein")
-        pdb_id=st.text_input("PDB ID",value=ex.get("pdb_id",""),placeholder="e.g. 2HYY").strip().upper()
+        pdb_id=st.text_input("PDB ID",value=ex.get("pdb_id",""),placeholder="e.g. 2HYY",key="pdb_inp").strip().upper()
         if pdb_id: st.caption(f"Will fetch: https://files.rcsb.org/download/{pdb_id}.pdb")
         st.markdown("### 🏥 Cancer Context")
         panel=st.selectbox("Cancer type:",list(CANCER_PANELS.keys()),
-            index=list(CANCER_PANELS.keys()).index(ex.get("panel","Melanoma")) if ex.get("panel","Melanoma") in CANCER_PANELS else 0)
+            index=list(CANCER_PANELS.keys()).index(ex.get("panel","Melanoma")) if ex.get("panel","Melanoma") in CANCER_PANELS else 0,
+            key="panel_sel")
         clp=CANCER_PANELS[panel]; dcl=ex.get("cell_line",clp[0])
         if dcl not in clp: dcl=clp[0]
-        cell_line=st.selectbox("Cell line:",clp,index=clp.index(dcl))
-        exhaustiveness=st.slider("Docking exhaustiveness",4,16,8,2)
-        run_btn=st.button("🔬 Run Docking + Predict Synergy",type="primary")
+        cell_line=st.selectbox("Cell line:",clp,index=clp.index(dcl),key="cl_sel")
+        exhaustiveness=st.slider("Docking exhaustiveness",4,16,8,2,key="exh_sl")
+        run_btn=st.button("🔬 Run Docking + Predict Synergy",type="primary",key="run_btn")
     with col2:
         st.markdown("### 🔭 3D Visualization")
         viz=st.empty()
@@ -519,7 +648,6 @@ with tab1:
                             with stat: st.write(f"✅ {name_b or 'Drug B'}: {sb:.2f} kcal/mol")
             else:
                 with stat: st.write("⚠️ Docking tools unavailable")
-            # Save all result variables to session state
             st.session_state['dsa']=dsa; st.session_state['dsb']=dsb
             st.session_state['dran']=dran; st.session_state['syn_score']=None
             st.session_state['name_a']=name_a; st.session_state['name_b']=name_b
@@ -585,13 +713,11 @@ Known: <strong>{ks:.2f}</strong> ({ksc}) | Predicted: <strong>{syn:.3f}</strong>
 
 **Docking score**: more negative = stronger binding. Below -8 = strong binder.""")
 
-    # ── Flythrough + Contact Map (outside tempdir, uses session state) ──────────
     if st.session_state.get('pa') or st.session_state.get('pb'):
         st.markdown("---")
         _pa=st.session_state.get('pa'); _pb=st.session_state.get('pb')
         _pdb=st.session_state.get('pdb_content','')
-
-        if st.button("🎬 Animate Pocket Flythrough",key="fly"):
+        if st.button("🎬 Animate Pocket Flythrough",key="fly_btn"):
             if _pdb:
                 fv=py3Dmol.view(width=750,height=500)
                 fv.addModel(_pdb,'pdb'); fv.setStyle({'cartoon':{'color':'spectrum','opacity':0.5}})
@@ -605,7 +731,6 @@ Known: <strong>{ks:.2f}</strong> ({ksc}) | Predicted: <strong>{syn:.3f}</strong>
                 fv.setBackgroundColor('#000011'); fv.zoomTo({'model':1} if _pa else {}); fv.zoom(0.3,2000)
                 components.html(fv._make_html(),height=520,scrolling=False)
                 st.caption("🎬 Zooming into binding pocket | 🔵 Drug A | 🟠 Drug B")
-
         with st.expander("🗺️ Drug-Protein Contact Map"):
             if _pdb:
                 cv=py3Dmol.view(width=700,height=400)
@@ -631,7 +756,7 @@ with tab2:
     if scores_data is None:
         st.warning("precomputed_scores.json not found.")
     else:
-        sp=st.selectbox("Cancer type:",list(scores_data.keys()),key="hp")
+        sp=st.selectbox("Cancer type:",list(scores_data.keys()),key="hp_sel")
         pd2=scores_data[sp]; drugs=pd2['drugs']; mat=np.array(pd2['matrix']); clh=pd2['cell_line']
         st.caption(f"Cell line: **{clh}** | {len(drugs)} drugs | {len(drugs)**2} combinations")
         fig=go.Figure(data=go.Heatmap(z=mat,x=drugs,y=drugs,
@@ -663,8 +788,8 @@ with tab3:
     else:
         ad=scores_data['Melanoma']['drugs']
         ca,cb=st.columns(2)
-        with ca: dar=st.selectbox("Drug A:",ad,index=ad.index("Vemurafenib") if "Vemurafenib" in ad else 0,key="ra")
-        with cb: dbr=st.selectbox("Drug B:",ad,index=ad.index("Trametinib") if "Trametinib" in ad else 1,key="rb")
+        with ca: dar=st.selectbox("Drug A:",ad,index=ad.index("Vemurafenib") if "Vemurafenib" in ad else 0,key="ra_sel")
+        with cb: dbr=st.selectbox("Drug B:",ad,index=ad.index("Trametinib") if "Trametinib" in ad else 1,key="rb_sel")
         if dar==dbr:
             st.warning("Select two different drugs.")
         else:
@@ -698,10 +823,10 @@ with tab3:
 with tab4:
     st.markdown("### 🏥 Clinical Trial Matching")
     c1,c2=st.columns(2)
-    with c1: cta=st.text_input("Drug A",placeholder="e.g. Vemurafenib",key="cta")
-    with c2: ctb=st.text_input("Drug B",placeholder="e.g. Trametinib",key="ctb")
-    ctc=st.text_input("Cancer type (optional)",placeholder="e.g. melanoma",key="ctc")
-    if st.button("🔍 Search Clinical Trials",key="ctbtn") and cta and ctb:
+    with c1: cta=st.text_input("Drug A",placeholder="e.g. Vemurafenib",key="cta_inp")
+    with c2: ctb=st.text_input("Drug B",placeholder="e.g. Trametinib",key="ctb_inp")
+    ctc=st.text_input("Cancer type (optional)",placeholder="e.g. melanoma",key="ctc_inp")
+    if st.button("🔍 Search Clinical Trials",key="ct_btn") and cta and ctb:
         with st.spinner("Searching ClinicalTrials.gov..."):
             try:
                 q=f"{cta} {ctb}"; q+=f" {ctc}" if ctc else ""
@@ -735,10 +860,10 @@ with tab4:
 with tab5:
     st.markdown("### 📚 Literature Mining")
     p1,p2=st.columns(2)
-    with p1: puba=st.text_input("Drug A",placeholder="e.g. Vemurafenib",key="puba")
-    with p2: pubb=st.text_input("Drug B",placeholder="e.g. Trametinib",key="pubb")
-    pubt=st.text_input("Additional topic",placeholder="e.g. synergy, resistance",key="pubt")
-    if st.button("🔍 Search PubMed",key="pubbtn") and puba and pubb:
+    with p1: puba=st.text_input("Drug A",placeholder="e.g. Vemurafenib",key="puba_inp")
+    with p2: pubb=st.text_input("Drug B",placeholder="e.g. Trametinib",key="pubb_inp")
+    pubt=st.text_input("Additional topic",placeholder="e.g. synergy, resistance",key="pubt_inp")
+    if st.button("🔍 Search PubMed",key="pub_btn") and puba and pubb:
         with st.spinner("Searching PubMed..."):
             try:
                 q=f"{puba} AND {pubb}"; q+=f" AND {pubt}" if pubt else ""
@@ -773,8 +898,8 @@ with tab6:
     else:
         adr=scores_data['Melanoma']['drugs']
         rr1,rr2=st.columns(2)
-        with rr1: anch=st.selectbox("Your drug:",adr,index=adr.index("Imatinib") if "Imatinib" in adr else 0,key="anch")
-        with rr2: rpan=st.selectbox("Cancer type:",list(scores_data.keys()),key="rpan")
+        with rr1: anch=st.selectbox("Your drug:",adr,index=adr.index("Imatinib") if "Imatinib" in adr else 0,key="anch_sel")
+        with rr2: rpan=st.selectbox("Cancer type:",list(scores_data.keys()),key="rpan_sel")
         pdr=scores_data[rpan]; dr=pdr['drugs']; mr=np.array(pdr['matrix']); clr=pdr['cell_line']
         if anch in dr:
             ai=dr.index(anch)
@@ -797,8 +922,8 @@ with tab6:
 with tab7:
     st.markdown("### 🔬 Mechanism of Action Explorer")
     mm1,mm2=st.columns(2)
-    with mm1: dma=st.selectbox("Drug A:",list(DRUG_MECHANISMS.keys()),index=list(DRUG_MECHANISMS.keys()).index("Vemurafenib"),key="moa_a")
-    with mm2: dmb=st.selectbox("Drug B:",list(DRUG_MECHANISMS.keys()),index=list(DRUG_MECHANISMS.keys()).index("Trametinib"),key="moa_b")
+    with mm1: dma=st.selectbox("Drug A:",list(DRUG_MECHANISMS.keys()),index=list(DRUG_MECHANISMS.keys()).index("Vemurafenib"),key="moa_a_sel")
+    with mm2: dmb=st.selectbox("Drug B:",list(DRUG_MECHANISMS.keys()),index=list(DRUG_MECHANISMS.keys()).index("Trametinib"),key="moa_b_sel")
     if dma and dmb and dma!=dmb:
         ma=DRUG_MECHANISMS[dma]; mb=DRUG_MECHANISMS[dmb]
         mi1,mi2=st.columns(2)
@@ -824,307 +949,174 @@ with tab7:
 | Pathway | {ma['pathway']} | {mb['pathway']} |
 | Class | {ma['class']} | {mb['class']} |
 | Same pathway | {'Yes ⚠️' if sp else 'No ✅'} | — |""")
-        # ── TAB 8: RESISTANCE MUTATION ANALYSIS ─────────────────────────────────────
+
+# ═══ TAB 8: RESISTANCE MUTATIONS ══════════════════════════════════════════════
 with tab8:
     st.header("🧬 Resistance Mutation Analysis")
-    st.markdown("Compare drug binding affinity against **wild-type vs mutant** cancer proteins. Resistance mutations reduce binding — this tab quantifies how much.")
+    st.markdown("Compare drug binding affinity against **wild-type vs mutant** cancer proteins.")
 
-    MUTATION_DB = {
-        "BRAF": {
-            "wild_type": "7MNX", "mutations": {
-                "V600E": {"pdb": "6PP9", "description": "Most common BRAF mutation (~50% melanomas). Vemurafenib targets this.", "drugs_affected": ["Vemurafenib", "Dabrafenib"]},
-                "V600K": {"pdb": "6P7J", "description": "Second most common BRAF mutation. Reduced sensitivity to Vemurafenib.", "drugs_affected": ["Vemurafenib"]},
-            }
-        },
-        "EGFR": {
-            "wild_type": "1IVO", "mutations": {
-                "T790M": {"pdb": "3UG2", "description": "Gatekeeper mutation — primary resistance to gefitinib/erlotinib.", "drugs_affected": ["Erlotinib", "Gefitinib", "Osimertinib"]},
-                "L858R": {"pdb": "2ITX", "description": "Activating mutation. Sensitizing mutation — increases drug binding.", "drugs_affected": ["Erlotinib", "Gefitinib"]},
-            }
-        },
-        "ALK": {
-            "wild_type": "2XP2", "mutations": {
-                "G1202R": {"pdb": "6MXM", "description": "Solvent-front mutation causing broad resistance to ALK inhibitors.", "drugs_affected": ["Crizotinib", "Alectinib"]},
-                "L1196M": {"pdb": "4ANS", "description": "Gatekeeper mutation. Primary crizotinib resistance mechanism.", "drugs_affected": ["Crizotinib"]},
-            }
-        },
-        "BCR-ABL": {
-            "wild_type": "2HYY", "mutations": {
-                "T315I": {"pdb": "2QOH", "description": "Gatekeeper mutation. Resistant to imatinib, dasatinib, nilotinib.", "drugs_affected": ["Imatinib", "Dasatinib", "Nilotinib"]},
-                "E255K": {"pdb": "2HYY", "description": "P-loop mutation. Moderate resistance to imatinib.", "drugs_affected": ["Imatinib"]},
-            }
-        },
-    }
-
-    col1, col2 = st.columns(2)
+    col1,col2=st.columns(2)
     with col1:
-          target_gene = st.selectbox("Cancer Target Gene", list(MUTATION_DB.keys()), key="res_target_gene")
+        target_gene=st.selectbox("Cancer Target Gene",list(MUTATION_DB.keys()),key="res_gene_sel")
     with col2:
-        mut_drug = st.selectbox("Drug to Test", ["Vemurafenib", "Erlotinib", "Imatinib", "Dasatinib", "Crizotinib", "Osimertinib", "Gefitinib", "Dabrafenib", "Alectinib", "Nilotinib"], key="res_mut_drug")
-    gene_data = MUTATION_DB[target_gene]
-    mutations = gene_data["mutations"]
+        mut_drug=st.selectbox("Drug to Test",
+            ["Vemurafenib","Erlotinib","Imatinib","Dasatinib","Crizotinib","Osimertinib","Gefitinib","Dabrafenib","Alectinib","Nilotinib"],
+            key="res_drug_sel")
 
-    if st.button("🔬 Run Resistance Analysis", type="primary", key="btn_resistance"):
+    gene_data=MUTATION_DB[target_gene]
+    mutations=gene_data["mutations"]
+
+    if st.button("🔬 Run Resistance Analysis",type="primary",key="btn_resistance"):
         st.subheader(f"Resistance Profile: {mut_drug} vs {target_gene} variants")
-
-        import random, math
-        random.seed(hash(mut_drug + target_gene))
-
-        wt_affinity = round(random.uniform(-9.5, -7.0), 2)
-
-        results = []
-        results.append({
-            "Variant": f"{target_gene} Wild-Type",
-            "PDB": gene_data["wild_type"],
-            "Binding Affinity (kcal/mol)": wt_affinity,
-            "Delta vs WT": 0.0,
-            "Resistance Level": "Reference",
-            "Clinical Impact": "Sensitive"
-        })
-
-        for mut_name, mut_info in mutations.items():
-            drug_affected = mut_drug in mut_info["drugs_affected"]
-            if drug_affected:
-                delta = round(random.uniform(1.5, 4.2), 2)
-                resistance = "High" if delta > 3 else "Moderate"
-                clinical = "Resistant" if delta > 3 else "Partially Resistant"
+        import random
+        random.seed(hash(mut_drug+target_gene))
+        wt_affinity=round(random.uniform(-9.5,-7.0),2)
+        results=[{
+            "Variant":f"{target_gene} Wild-Type","PDB":gene_data["wild_type"],
+            "Binding Affinity (kcal/mol)":wt_affinity,"Delta vs WT":0.0,
+            "Resistance Level":"Reference","Clinical Impact":"Sensitive"
+        }]
+        for mut_name,mut_info in mutations.items():
+            affected=mut_drug in mut_info["drugs_affected"]
+            if affected:
+                delta=round(random.uniform(1.5,4.2),2)
+                resistance="High" if delta>3 else "Moderate"
+                clinical="Resistant" if delta>3 else "Partially Resistant"
             else:
-                delta = round(random.uniform(-0.5, 0.8), 2)
-                resistance = "Low"
-                clinical = "Sensitive"
-
+                delta=round(random.uniform(-0.5,0.8),2)
+                resistance="Low"; clinical="Sensitive"
             results.append({
-                "Variant": f"{target_gene} {mut_name}",
-                "PDB": mut_info["pdb"],
-                "Binding Affinity (kcal/mol)": round(wt_affinity + delta, 2),
-                "Delta vs WT": delta,
-                "Resistance Level": resistance,
-                "Clinical Impact": clinical
+                "Variant":f"{target_gene} {mut_name}","PDB":mut_info["pdb"],
+                "Binding Affinity (kcal/mol)":round(wt_affinity+delta,2),"Delta vs WT":delta,
+                "Resistance Level":resistance,"Clinical Impact":clinical
             })
-
-        df_res = pd.DataFrame(results)
-
-        import plotly.graph_objects as go
-
-        colors = []
-        for _, row in df_res.iterrows():
-            if row["Resistance Level"] == "Reference":
-                colors.append("#4CAF50")
-            elif row["Resistance Level"] == "High":
-                colors.append("#F44336")
-            elif row["Resistance Level"] == "Moderate":
-                colors.append("#FF9800")
-            else:
-                colors.append("#2196F3")
-
-        fig_res = go.Figure(go.Bar(
-            x=df_res["Variant"],
-            y=df_res["Binding Affinity (kcal/mol)"],
+        df_res=pd.DataFrame(results)
+        colors=[]
+        for _,row in df_res.iterrows():
+            if row["Resistance Level"]=="Reference": colors.append("#4CAF50")
+            elif row["Resistance Level"]=="High": colors.append("#F44336")
+            elif row["Resistance Level"]=="Moderate": colors.append("#FF9800")
+            else: colors.append("#2196F3")
+        fig_res=go.Figure(go.Bar(
+            x=df_res["Variant"],y=df_res["Binding Affinity (kcal/mol)"],
             marker_color=colors,
-            text=df_res["Delta vs WT"].apply(lambda x: f"Δ{x:+.2f}" if x != 0 else "WT"),
-            textposition="outside"
-        ))
+            text=df_res["Delta vs WT"].apply(lambda x: f"Δ{x:+.2f}" if x!=0 else "WT"),
+            textposition="outside"))
         fig_res.update_layout(
             title=f"{mut_drug} Binding Affinity Across {target_gene} Variants",
-            yaxis_title="Binding Affinity (kcal/mol)",
-            xaxis_title="Protein Variant",
-            template="plotly_dark",
-            height=420,
-            yaxis=dict(range=[min(df_res["Binding Affinity (kcal/mol)"]) - 2, 0])
-        )
-        st.plotly_chart(fig_res, use_container_width=True)
-
+            yaxis_title="Binding Affinity (kcal/mol)",xaxis_title="Protein Variant",
+            template="plotly_dark",height=420,
+            yaxis=dict(range=[min(df_res["Binding Affinity (kcal/mol)"])-2,0]))
+        st.plotly_chart(fig_res,use_container_width=True)
         st.dataframe(df_res.style.applymap(
-            lambda v: "color: #F44336; font-weight: bold" if v == "High" else
-                      ("color: #FF9800" if v == "Moderate" else
-                       ("color: #4CAF50" if v == "Low" else "")),
-            subset=["Resistance Level"]
-        ), use_container_width=True)
-
+            lambda v: "color: #F44336; font-weight: bold" if v=="High" else
+                      ("color: #FF9800" if v=="Moderate" else
+                       ("color: #4CAF50" if v=="Low" else "")),
+            subset=["Resistance Level"]),use_container_width=True)
         st.subheader("📋 Mutation Clinical Notes")
-        for mut_name, mut_info in mutations.items():
-            affected = "⚠️ Affects this drug" if mut_drug in mut_info["drugs_affected"] else "✅ Does not affect this drug"
-            with st.expander(f"{target_gene} {mut_name} — {affected}"):
+        for mut_name,mut_info in mutations.items():
+            affected_str="⚠️ Affects this drug" if mut_drug in mut_info["drugs_affected"] else "✅ Does not affect this drug"
+            with st.expander(f"{target_gene} {mut_name} — {affected_str}"):
                 st.markdown(f"**Mechanism:** {mut_info['description']}")
                 st.markdown(f"**Drugs affected:** {', '.join(mut_info['drugs_affected'])}")
                 st.markdown(f"**PDB Structure:** `{mut_info['pdb']}`")
+        if mut_drug in ["Vemurafenib","Erlotinib","Imatinib"] and target_gene in ["BRAF","EGFR","BCR-ABL"]:
+            st.info(f"💡 For {mut_drug}-resistant {target_gene} mutations, consider next-generation inhibitors or combination strategies in the Predict Synergy tab.")
 
-        if mut_drug in ["Vemurafenib", "Erlotinib", "Imatinib"] and target_gene in ["BRAF", "EGFR", "BCR-ABL"]:
-            st.info(f"💡 **Clinical note:** For {mut_drug}-resistant {target_gene} mutations, consider next-generation inhibitors or combination strategies shown in the Predict Synergy tab.")
-
-# ── TAB 9: 4D DOCKING TRAJECTORY ────────────────────────────────────────────
+# ═══ TAB 9: 4D TRAJECTORY ═════════════════════════════════════════════════════
 with tab9:
     st.header("🎬 4D Docking Trajectory")
-    st.markdown("Visualize how a drug **approaches and binds** to its protein pocket — a simulated binding trajectory with energy profile.")
+    st.markdown("Visualize how a drug **approaches and binds** to its protein pocket — simulated binding trajectory with energy profile.")
 
-    traj_drugs = ["Vemurafenib", "Trametinib", "Erlotinib", "Imatinib", "Paclitaxel", "Venetoclax", "Alpelisib", "Osimertinib"]
-    traj_targets = list(CANCER_TARGETS.keys()) if "CANCER_TARGETS" in dir() else ["BRAF (Melanoma)", "EGFR (Lung)", "BCR-ABL (Leukemia)", "CDK4/6 (Breast)", "VEGFR (Angiogenesis)"]
+    TRAJ_TARGETS=["BRAF (Melanoma)","EGFR (Lung)","BCR-ABL (Leukemia)","CDK4/6 (Breast)","VEGFR (Angiogenesis)"]
+    TRAJ_DRUGS=["Vemurafenib","Trametinib","Erlotinib","Imatinib","Paclitaxel","Venetoclax","Alpelisib","Osimertinib"]
 
-    col1, col2 = st.columns(2)
-    with col1:
-        traj_drug = st.selectbox("Drug", traj_drugs, key="traj_drug")
-    with col2:
-        traj_target = st.selectbox("Target Protein", traj_targets, key="traj_target")
+    col1,col2=st.columns(2)
+    with col1: traj_drug=st.selectbox("Drug",TRAJ_DRUGS,key="traj_drug_sel")
+    with col2: traj_target=st.selectbox("Target Protein",TRAJ_TARGETS,key="traj_target_sel")
+    n_frames=st.slider("Trajectory Frames",20,80,40,key="traj_frames_sl")
 
-    n_frames = st.slider("Trajectory Frames", 20, 80, 40, key="traj_frames")
-
-    if st.button("▶️ Generate 4D Trajectory", type="primary", key="btn_4d_traj"):
-        import numpy as np
-
-        st.subheader(f"🎬 {traj_drug} → {traj_target} Binding Trajectory")
-
+    if st.button("▶️ Generate 4D Trajectory",type="primary",key="btn_4d_traj"):
         import random
-        random.seed(hash(traj_drug + traj_target))
-        np.random.seed(hash(traj_drug + traj_target) % (2**31))
-
-        # Simulate trajectory: drug starts far, approaches pocket, settles
-        frames = n_frames
-        t = np.linspace(0, 1, frames)
-
-        # Drug position: starts at (30,30,30), ends at (0,0,0) = pocket center
-        start_pos = np.array([30.0, 28.0, 25.0])
-        end_pos = np.array([0.0, 0.0, 0.0])
-        
-        # Sigmoid approach with some wobble
-        sigmoid = 1 / (1 + np.exp(-10*(t - 0.5)))
-        noise = np.random.randn(frames, 3) * (1 - sigmoid[:, None]) * 3
-
-        drug_traj = start_pos[None] * (1 - sigmoid[:, None]) + end_pos[None] * sigmoid[:, None] + noise
-
-        # Energy profile: decreases as drug approaches, dips at binding
-        binding_energy = -2 + (-7) * sigmoid + 1.5 * np.exp(-((t - 0.85)**2) / 0.005) * (1-sigmoid)
-        binding_energy += np.random.randn(frames) * 0.3
-
-        import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
-
-        # Generate pseudo-protein pocket residues (fixed spheres)
+        st.subheader(f"🎬 {traj_drug} → {traj_target} Binding Trajectory")
+        random.seed(hash(traj_drug+traj_target))
+        np.random.seed(hash(traj_drug+traj_target)%(2**31))
+        frames=n_frames
+        t=np.linspace(0,1,frames)
+        start_pos=np.array([30.0,28.0,25.0]); end_pos=np.array([0.0,0.0,0.0])
+        sigmoid=1/(1+np.exp(-10*(t-0.5)))
+        noise=np.random.randn(frames,3)*(1-sigmoid[:,None])*3
+        drug_traj=start_pos[None]*(1-sigmoid[:,None])+end_pos[None]*sigmoid[:,None]+noise
+        binding_energy=-2+(-7)*sigmoid+1.5*np.exp(-((t-0.85)**2)/0.005)*(1-sigmoid)
+        binding_energy+=np.random.randn(frames)*0.3
         np.random.seed(42)
-        n_residues = 18
-        pocket_x = np.random.randn(n_residues) * 5
-        pocket_y = np.random.randn(n_residues) * 5
-        pocket_z = np.random.randn(n_residues) * 5
-        residue_colors = np.random.choice(["#FF6B6B", "#4ECDC4", "#45B7D1", "#96CEB4", "#FFEAA7"], n_residues)
-
-        # Build animated figure
-        fig_traj = go.Figure()
-
-        # Protein pocket — static
-        fig_traj.add_trace(go.Scatter3d(
-            x=pocket_x, y=pocket_y, z=pocket_z,
-            mode="markers",
-            marker=dict(size=12, color=list(residue_colors), opacity=0.7),
-            name="Pocket Residues",
-            hovertemplate="Residue<extra></extra>"
-        ))
-
-        # Drug position — animated
-        fig_traj.add_trace(go.Scatter3d(
-            x=[drug_traj[0, 0]], y=[drug_traj[0, 1]], z=[drug_traj[0, 2]],
-            mode="markers",
-            marker=dict(size=16, color="#FFD700", symbol="diamond", opacity=1.0),
-            name=traj_drug,
-            hovertemplate=f"{traj_drug}<extra></extra>"
-        ))
-
-        # Trail
-        fig_traj.add_trace(go.Scatter3d(
-            x=[drug_traj[0, 0]], y=[drug_traj[0, 1]], z=[drug_traj[0, 2]],
-            mode="lines",
-            line=dict(color="#FFD700", width=3),
-            opacity=0.4,
-            name="Approach Path",
-            showlegend=True
-        ))
-
-        frames_list = []
+        n_res=18
+        px=np.random.randn(n_res)*5; py=np.random.randn(n_res)*5; pz=np.random.randn(n_res)*5
+        rc=np.random.choice(["#FF6B6B","#4ECDC4","#45B7D1","#96CEB4","#FFEAA7"],n_res)
+        fig_traj=go.Figure()
+        fig_traj.add_trace(go.Scatter3d(x=px,y=py,z=pz,mode="markers",
+            marker=dict(size=12,color=list(rc),opacity=0.7),name="Pocket Residues",hovertemplate="Residue<extra></extra>"))
+        fig_traj.add_trace(go.Scatter3d(x=[drug_traj[0,0]],y=[drug_traj[0,1]],z=[drug_traj[0,2]],
+            mode="markers",marker=dict(size=16,color="#FFD700",symbol="diamond",opacity=1.0),
+            name=traj_drug,hovertemplate=f"{traj_drug}<extra></extra>"))
+        fig_traj.add_trace(go.Scatter3d(x=[drug_traj[0,0]],y=[drug_traj[0,1]],z=[drug_traj[0,2]],
+            mode="lines",line=dict(color="#FFD700",width=3),opacity=0.4,name="Approach Path"))
+        frames_list=[]
         for i in range(frames):
-            frames_list.append(go.Frame(
-                data=[
-                    go.Scatter3d(x=pocket_x, y=pocket_y, z=pocket_z,
-                                 mode="markers",
-                                 marker=dict(size=12, color=list(residue_colors), opacity=0.7)),
-                    go.Scatter3d(x=[drug_traj[i, 0]], y=[drug_traj[i, 1]], z=[drug_traj[i, 2]],
-                                 mode="markers",
-                                 marker=dict(size=16, color="#FFD700", symbol="diamond")),
-                    go.Scatter3d(x=drug_traj[:i+1, 0], y=drug_traj[:i+1, 1], z=drug_traj[:i+1, 2],
-                                 mode="lines",
-                                 line=dict(color="#FFD700", width=3),
-                                 opacity=0.4),
-                ],
-                name=str(i)
-            ))
-
-        fig_traj.frames = frames_list
-
+            frames_list.append(go.Frame(data=[
+                go.Scatter3d(x=px,y=py,z=pz,mode="markers",marker=dict(size=12,color=list(rc),opacity=0.7)),
+                go.Scatter3d(x=[drug_traj[i,0]],y=[drug_traj[i,1]],z=[drug_traj[i,2]],
+                    mode="markers",marker=dict(size=16,color="#FFD700",symbol="diamond")),
+                go.Scatter3d(x=drug_traj[:i+1,0],y=drug_traj[:i+1,1],z=drug_traj[:i+1,2],
+                    mode="lines",line=dict(color="#FFD700",width=3),opacity=0.4),
+            ],name=str(i)))
+        fig_traj.frames=frames_list
         fig_traj.update_layout(
-            scene=dict(
-                bgcolor="rgb(10,10,30)",
-                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
-                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
-                zaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=""),
-            ),
-            paper_bgcolor="rgb(10,10,30)",
-            font_color="white",
-            title=dict(text=f"🎬 {traj_drug} Approaching {traj_target} Binding Pocket", font=dict(color="white")),
-            updatemenus=[dict(
-                type="buttons", showactive=False,
-                y=1.05, x=0.5, xanchor="center",
+            scene=dict(bgcolor="rgb(10,10,30)",
+                xaxis=dict(showgrid=False,zeroline=False,showticklabels=False,title=""),
+                yaxis=dict(showgrid=False,zeroline=False,showticklabels=False,title=""),
+                zaxis=dict(showgrid=False,zeroline=False,showticklabels=False,title="")),
+            paper_bgcolor="rgb(10,10,30)",font_color="white",
+            title=dict(text=f"🎬 {traj_drug} Approaching {traj_target} Binding Pocket",font=dict(color="white")),
+            updatemenus=[dict(type="buttons",showactive=False,y=1.05,x=0.5,xanchor="center",
                 buttons=[
-                    dict(label="▶ Play", method="animate",
-                         args=[None, {"frame": {"duration": 80, "redraw": True}, "fromcurrent": True, "transition": {"duration": 20}}]),
-                    dict(label="⏸ Pause", method="animate",
-                         args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}])
-                ]
-            )],
+                    dict(label="▶ Play",method="animate",
+                         args=[None,{"frame":{"duration":80,"redraw":True},"fromcurrent":True,"transition":{"duration":20}}]),
+                    dict(label="⏸ Pause",method="animate",
+                         args=[[None],{"frame":{"duration":0,"redraw":False},"mode":"immediate","transition":{"duration":0}}])
+                ])],
             sliders=[dict(
-                steps=[dict(method="animate", args=[[str(i)], {"frame": {"duration": 80, "redraw": True}, "mode": "immediate"}],
-                            label=f"{i}") for i in range(frames)],
-                x=0.05, len=0.9, y=0, currentvalue=dict(prefix="Frame: ", visible=True, xanchor="center"),
-                transition=dict(duration=20)
-            )],
-            height=550,
-            legend=dict(font=dict(color="white"))
-        )
+                steps=[dict(method="animate",args=[[str(i)],{"frame":{"duration":80,"redraw":True},"mode":"immediate"}],
+                            label=str(i)) for i in range(frames)],
+                x=0.05,len=0.9,y=0,currentvalue=dict(prefix="Frame: ",visible=True,xanchor="center"),
+                transition=dict(duration=20))],
+            height=550,legend=dict(font=dict(color="white")))
+        st.plotly_chart(fig_traj,use_container_width=True)
+        fig_energy=go.Figure()
+        fig_energy.add_trace(go.Scatter(x=list(range(frames)),y=list(binding_energy),
+            mode="lines+markers",line=dict(color="#FFD700",width=2),marker=dict(size=4),
+            fill="tozeroy",fillcolor="rgba(255,215,0,0.15)",name="Binding Energy"))
+        fig_energy.add_hline(y=float(binding_energy[-5:].mean()),line_dash="dash",line_color="#4CAF50",
+            annotation_text=f"Final: {binding_energy[-5:].mean():.2f} kcal/mol")
+        fig_energy.update_layout(title="⚡ Binding Energy Profile Along Trajectory",
+            xaxis_title="Trajectory Frame",yaxis_title="ΔG (kcal/mol)",template="plotly_dark",height=280)
+        st.plotly_chart(fig_energy,use_container_width=True)
+        col1,col2,col3=st.columns(3)
+        col1.metric("Initial Distance","~42 Å","Far from pocket")
+        col2.metric("Final Affinity",f"{binding_energy[-5:].mean():.2f} kcal/mol","Stable binding")
+        col3.metric("Frames Simulated",str(frames),f"~{frames*80}ms playback")
 
-        st.plotly_chart(fig_traj, use_container_width=True)
-
-        # Energy profile below
-        fig_energy = go.Figure()
-        fig_energy.add_trace(go.Scatter(
-            x=list(range(frames)), y=list(binding_energy),
-            mode="lines+markers",
-            line=dict(color="#FFD700", width=2),
-            marker=dict(size=4),
-            fill="tozeroy", fillcolor="rgba(255,215,0,0.15)",
-            name="Binding Energy"
-        ))
-        fig_energy.add_hline(y=binding_energy[-5:].mean(), line_dash="dash",
-                             line_color="#4CAF50", annotation_text=f"Final: {binding_energy[-5:].mean():.2f} kcal/mol")
-        fig_energy.update_layout(
-            title="⚡ Binding Energy Profile Along Trajectory",
-            xaxis_title="Trajectory Frame",
-            yaxis_title="ΔG (kcal/mol)",
-            template="plotly_dark",
-            height=280,
-        )
-        st.plotly_chart(fig_energy, use_container_width=True)
-
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Initial Distance", "~42 Å", "Far from pocket")
-        col2.metric("Final Affinity", f"{binding_energy[-5:].mean():.2f} kcal/mol", "Stable binding")
-        col3.metric("Frames Simulated", str(frames), f"~{frames*80}ms playback")
-
-
-# ── TAB 10: NATURAL LANGUAGE QUERY ──────────────────────────────────────────
+# ═══ TAB 10: NATURAL LANGUAGE QUERY ══════════════════════════════════════════
 with tab10:
     st.header("💬 Natural Language Query")
-    st.markdown("Ask questions about drug synergy in plain English. No API key needed — powered by rule-based parsing over your precomputed scores.")
+    st.markdown("Ask questions about drug synergy in plain English — powered by rule-based parsing over your precomputed scores.")
 
     if "nl_history" not in st.session_state:
-        st.session_state.nl_history = []
+        st.session_state.nl_history=[]
+    if "nl_query_input" not in st.session_state:
+        st.session_state.nl_query_input=""
 
-    EXAMPLE_QUERIES = [
+    EXAMPLE_QUERIES=[
         "Which drug pairs are most synergistic in breast cancer?",
         "Is Vemurafenib + Trametinib synergistic?",
         "What is the best drug combination for leukemia?",
@@ -1134,153 +1126,142 @@ with tab10:
     ]
 
     st.markdown("**Try an example:**")
-    ex_cols = st.columns(3)
-    for i, eq in enumerate(EXAMPLE_QUERIES):
-        if ex_cols[i % 3].button(eq, key=f"ex_{i}"):
-            st.session_state.nl_query_input = eq
+    ex_cols=st.columns(3)
+    for i,eq in enumerate(EXAMPLE_QUERIES):
+        if ex_cols[i%3].button(eq,key=f"nlex_{i}"):
+            st.session_state.nl_query_input=eq
 
-    nl_query = st.text_input("Your question:", value=st.session_state.get("nl_query_input", ""), key="nl_query_box", placeholder="e.g. Which drug pairs are synergistic in melanoma?")
+    nl_query=st.text_input("Your question:",value=st.session_state.nl_query_input,
+        key="nl_query_box",placeholder="e.g. Which drug pairs are synergistic in melanoma?")
 
-    def parse_nl_query(query, scores_data):
-        """Rule-based NL query parser over precomputed_scores.json"""
-        q = query.lower().strip()
-
-        CANCER_ALIASES = {
-            "breast": ["MCF7", "MDA-MB-231", "T-47D"],
-            "lung": ["A549", "NCI-H460", "HOP-92"],
-            "leukemia": ["K-562", "CCRF-CEM", "HL-60"],
-            "melanoma": ["UACC-62", "MALME-3M", "SK-MEL-5"],
-            "colon": ["HCT-116", "HT29", "SW-620"],
-            "ovarian": ["OVCAR-3", "IGROV1", "SK-OV-3"],
-            "prostate": ["PC-3", "DU-145"],
-            "cns": ["U251", "SF-268", "SF-295"],
-            "renal": ["A498", "CAKI-1", "SN12C"],
-        }
-
-        DRUG_LIST = ["Vemurafenib", "Trametinib", "Erlotinib", "Imatinib", "Paclitaxel",
-                     "Venetoclax", "Alpelisib", "Osimertinib", "Lapatinib", "Capecitabine",
-                     "Palbociclib", "Ribociclib", "Dasatinib", "Crizotinib", "Dabrafenib"]
-
-        # Collect all scores
-        all_pairs = []
-        for panel, drug_dict in scores_data.items():
-            for d1, partners in drug_dict.items():
-                for d2, score in partners.items():
-                    if isinstance(score, (int, float)):
-                        all_pairs.append({"drug1": d1, "drug2": d2, "panel": panel, "score": float(score)})
-
-        if not all_pairs:
-            return "⚠️ No precomputed scores loaded. Run the Synergy Landscape tab first."
-
-        import pandas as pd
-        df_all = pd.DataFrame(all_pairs)
-
-        # Detect mentioned drugs
-        mentioned_drugs = [d for d in DRUG_LIST if d.lower() in q]
-
-        # Detect cancer type
-        detected_cancer = None
-        for cancer, cell_lines in CANCER_ALIASES.items():
-            if cancer in q:
-                detected_cancer = cancer
-                break
-
-        # Detect intent
-        is_synergistic = any(w in q for w in ["synergistic", "synergy", "best", "top", "work well", "effective"])
-        is_antagonistic = any(w in q for w in ["antagonistic", "antagonism", "worst", "avoid", "bad"])
-        is_comparison = any(w in q for w in ["compare", "across", "different", "which cancer"])
-
-        # Filter by cancer
-        df_filtered = df_all.copy()
-        if detected_cancer:
-            cancer_lines = CANCER_ALIASES[detected_cancer]
-            df_filtered = df_filtered[df_filtered["panel"].apply(
-                lambda p: any(cl.lower() in p.lower() for cl in cancer_lines)
-            )]
-            if df_filtered.empty:
-                df_filtered = df_all[df_all["panel"].str.lower().str.contains(detected_cancer[:4])]
-
-        # Filter by drug
-        if len(mentioned_drugs) == 2:
-            d1, d2 = mentioned_drugs[0], mentioned_drugs[1]
-            df_drug = df_filtered[
-                ((df_filtered["drug1"] == d1) & (df_filtered["drug2"] == d2)) |
-                ((df_filtered["drug1"] == d2) & (df_filtered["drug2"] == d1))
-            ]
-            if df_drug.empty:
-                return f"❌ No data found for **{d1} + {d2}**. Try the Predict Synergy tab for real-time docking."
-            avg_score = df_drug["score"].mean()
-            label = "🟢 Synergistic" if avg_score > 0.1 else ("🔴 Antagonistic" if avg_score < -0.1 else "🟡 Additive")
-            result = f"**{d1} + {d2}**: Average synergy score = `{avg_score:.3f}` → **{label}**\n\n"
-            result += f"Across {len(df_drug)} cancer panels:\n"
-            for _, row in df_drug.sort_values("score", ascending=False).iterrows():
-                result += f"- {row['panel']}: `{row['score']:.3f}`\n"
-            return result
-
-        elif len(mentioned_drugs) == 1:
-            drug = mentioned_drugs[0]
-            df_drug = df_filtered[
-                (df_filtered["drug1"] == drug) | (df_filtered["drug2"] == drug)
-            ]
-            if df_drug.empty:
-                return f"❌ No data found for **{drug}**."
-
-            if is_comparison:
-                result = f"**{drug}** synergy scores across cancer types:\n\n"
-                for panel, group in df_drug.groupby("panel"):
-                    avg = group["score"].mean()
-                    bar = "█" * int(abs(avg) * 10)
-                    label = "+" if avg > 0 else ""
-                    result += f"- `{panel}`: {label}{avg:.3f} {bar}\n"
-                return result
-            else:
-                partners = df_drug.copy()
-                partners["partner"] = partners.apply(
-                    lambda r: r["drug2"] if r["drug1"] == drug else r["drug1"], axis=1
-                )
-                top = partners.groupby("partner")["score"].mean().sort_values(ascending=False)
-                result = f"**Best combinations with {drug}**:\n\n"
-                for partner, score in top.head(5).items():
-                    label = "🟢" if score > 0.1 else ("🔴" if score < -0.1 else "🟡")
-                    result += f"{label} **{drug} + {partner}**: `{score:.3f}`\n"
-                return result
-
-        else:
-            # General query
-            if is_antagonistic:
-                top = df_filtered.nsmallest(8, "score")
-                result = f"**Most antagonistic pairs{' in ' + detected_cancer if detected_cancer else ''}:**\n\n"
-                for _, row in top.iterrows():
-                    result += f"🔴 **{row['drug1']} + {row['drug2']}** (`{row['panel']}`): `{row['score']:.3f}`\n"
-                return result
-            else:
-                top = df_filtered.nlargest(8, "score")
-                result = f"**Most synergistic pairs{' in ' + detected_cancer if detected_cancer else ''}:**\n\n"
-                for _, row in top.iterrows():
-                    result += f"🟢 **{row['drug1']} + {row['drug2']}** (`{row['panel']}`): `{row['score']:.3f}`\n"
-                return result
-
-   if st.button("🔍 Ask", type="primary", key="btn_nl_ask") and nl_query:
+    if st.button("🔍 Ask",type="primary",key="btn_nl_ask") and nl_query:
         with st.spinner("Analyzing..."):
-            scores_data = {}
-            try:
-                import json, os
-                score_path = "precomputed_scores.json"
-                if os.path.exists(score_path):
-                    with open(score_path) as f:
-                        scores_data = json.load(f)
-            except Exception:
-                pass
-
-            answer = parse_nl_query(nl_query, scores_data)
-            st.session_state.nl_history.append({"q": nl_query, "a": answer})
-            st.session_state.nl_query_input = ""
+            answer=parse_nl_query(nl_query,scores_data)
+            st.session_state.nl_history.append({"q":nl_query,"a":answer})
+            st.session_state.nl_query_input=""
 
     if st.session_state.nl_history:
         for item in reversed(st.session_state.nl_history[-5:]):
             st.markdown(f"**Q: {item['q']}**")
             st.markdown(item["a"])
             st.divider()
-
-    if not st.session_state.nl_history:
+    else:
         st.info("💡 Ask anything — drug pairs, cancer types, best combinations, comparisons.")
+
+# ═══ TAB 11: POLYPHARMACOLOGY NETWORK ════════════════════════════════════════
+with tab11:
+    st.header("🕸️ Polypharmacology Network Explorer")
+    st.markdown("""See the **systems-level picture**: every drug as a node, connected to the pathways/targets it hits and the
+other drugs sharing those pathways. Pairwise tabs show one combination at a time — this shows the whole web of overlap and complementarity at once.""")
+
+    net_col1, net_col2 = st.columns([1,3])
+    with net_col1:
+        view_mode = st.radio("Network focus", ["All pathways", "Single pathway", "Drugs around one anchor"], key="net_mode")
+        if view_mode == "Single pathway":
+            all_pathways = sorted(set(v['pathway'] for v in DRUG_MECHANISMS.values()))
+            focus_pathway = st.selectbox("Pathway", all_pathways, key="net_pathway_sel")
+            net_drugs = [d for d,v in DRUG_MECHANISMS.items() if v['pathway']==focus_pathway]
+        elif view_mode == "Drugs around one anchor":
+            anchor_drug = st.selectbox("Anchor drug", sorted(DRUG_MECHANISMS.keys()),
+                index=sorted(DRUG_MECHANISMS.keys()).index("Vemurafenib"), key="net_anchor_sel")
+            anchor_pathway = DRUG_MECHANISMS[anchor_drug]['pathway']
+            related_pathways = set()
+            for (p1,p2) in SYNERGY_RULES:
+                if p1 == anchor_pathway: related_pathways.add(p2)
+                if p2 == anchor_pathway: related_pathways.add(p1)
+            related_pathways.add(anchor_pathway)
+            net_drugs = [d for d,v in DRUG_MECHANISMS.items() if v['pathway'] in related_pathways]
+        else:
+            net_drugs = list(DRUG_MECHANISMS.keys())
+        st.caption(f"{len(net_drugs)} drugs in view")
+        st.markdown("**Legend**")
+        st.markdown("🔵 Drug node — size = number of pathway connections")
+        st.markdown("🟢 Edge = synergy-predicted pathway relationship")
+        st.markdown("🔴 Edge = same-pathway (competition risk)")
+
+    with net_col2:
+        pathways_in_view = sorted(set(DRUG_MECHANISMS[d]['pathway'] for d in net_drugs))
+        pathway_angle = {p: 2*np.pi*i/max(len(pathways_in_view),1) for i,p in enumerate(pathways_in_view)}
+        pathway_radius = 3.5
+
+        drug_pos = {}
+        for p in pathways_in_view:
+            drugs_here = [d for d in net_drugs if DRUG_MECHANISMS[d]['pathway']==p]
+            base_angle = pathway_angle[p]
+            for j, d in enumerate(drugs_here):
+                spread = 0.35 * (j - (len(drugs_here)-1)/2)
+                ang = base_angle + spread
+                r = pathway_radius + 1.2
+                drug_pos[d] = (r*np.cos(ang), r*np.sin(ang))
+
+        pathway_pos = {p: (pathway_radius*0.4*np.cos(pathway_angle[p]), pathway_radius*0.4*np.sin(pathway_angle[p])) for p in pathways_in_view}
+
+        fig_net = go.Figure()
+
+        # drug-to-own-pathway edges (gray)
+        for d in net_drugs:
+            p = DRUG_MECHANISMS[d]['pathway']
+            dx, dy = drug_pos[d]; px, py = pathway_pos[p]
+            fig_net.add_trace(go.Scatter(x=[dx,px], y=[dy,py], mode='lines',
+                line=dict(color='rgba(150,150,150,0.3)', width=1), showlegend=False, hoverinfo='skip'))
+
+        # cross-pathway synergy/competition edges between pathway hubs
+        seen_edges = set()
+        for (p1,p2), rule in SYNERGY_RULES.items():
+            if p1 in pathway_pos and p2 in pathway_pos:
+                key = tuple(sorted([p1,p2]))
+                if key in seen_edges or p1==p2: continue
+                seen_edges.add(key)
+                x1,y1 = pathway_pos[p1]; x2,y2 = pathway_pos[p2]
+                is_good = '✅' in rule
+                fig_net.add_trace(go.Scatter(x=[x1,x2], y=[y1,y2], mode='lines',
+                    line=dict(color='rgba(76,175,80,0.5)' if is_good else 'rgba(244,67,54,0.5)', width=2.5),
+                    showlegend=False, hovertext=rule, hoverinfo='text'))
+
+        # pathway hub nodes
+        fig_net.add_trace(go.Scatter(
+            x=[pathway_pos[p][0] for p in pathways_in_view],
+            y=[pathway_pos[p][1] for p in pathways_in_view],
+            mode='markers+text', text=pathways_in_view, textposition='middle center',
+            textfont=dict(size=10, color='white'),
+            marker=dict(size=[34]*len(pathways_in_view), color='#FF9800', symbol='diamond', line=dict(width=2,color='white')),
+            name='Pathway', hovertext=[f"Pathway: {p}" for p in pathways_in_view], hoverinfo='text'))
+
+        # drug nodes
+        drug_conn_count = {d: 1 for d in net_drugs}
+        fig_net.add_trace(go.Scatter(
+            x=[drug_pos[d][0] for d in net_drugs],
+            y=[drug_pos[d][1] for d in net_drugs],
+            mode='markers+text', text=net_drugs, textposition='top center',
+            textfont=dict(size=9, color='white'),
+            marker=dict(size=18, color='#4fc3f7', line=dict(width=1.5,color='white')),
+            name='Drug',
+            hovertext=[f"{d}<br>Target: {DRUG_MECHANISMS[d]['target']}<br>Class: {DRUG_MECHANISMS[d]['class']}" for d in net_drugs],
+            hoverinfo='text'))
+
+        fig_net.update_layout(
+            height=650, showlegend=True,
+            xaxis=dict(visible=False), yaxis=dict(visible=False),
+            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(10,10,20,0.3)',
+            font=dict(color='white'), margin=dict(l=10,r=10,t=10,b=10),
+            legend=dict(font=dict(color='white'), bgcolor='rgba(0,0,0,0.3)'))
+        st.plotly_chart(fig_net, use_container_width=True)
+        st.caption("🟠 Diamond = pathway hub | 🔵 Circle = drug | Green edge = cross-pathway synergy | Red edge = same-pathway competition risk | Hover for details")
+
+    st.markdown("---")
+    st.markdown("#### 📋 Pathway Co-occurrence Summary")
+    summary_rows = []
+    seen_pairs = set()
+    for (p1,p2), rule in SYNERGY_RULES.items():
+        key = tuple(sorted([p1,p2]))
+        if key in seen_pairs: continue
+        seen_pairs.add(key)
+        n_drugs_p1 = sum(1 for v in DRUG_MECHANISMS.values() if v['pathway']==p1)
+        n_drugs_p2 = sum(1 for v in DRUG_MECHANISMS.values() if v['pathway']==p2)
+        summary_rows.append({
+            "Pathway A": p1, "Pathway B": p2,
+            "Relationship": "✅ Synergistic" if '✅' in rule else "⚠️ Competition Risk",
+            "Drugs in A": n_drugs_p1, "Drugs in B": n_drugs_p2
+        })
+    if summary_rows:
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
