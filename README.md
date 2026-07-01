@@ -3,7 +3,9 @@
 > Predict whether two cancer drugs will work better together — using real molecular docking, graph neural networks, and cancer cell line context, with results exposed as standard healthcare interoperability resources.
 
 **Live demo →** [proteinsynergydock-app-kddtbdmnkixw9c8jfnf8un.streamlit.app](https://proteinsynergydock-app-kddtbdmnkixw9c8jfnf8un.streamlit.app/)
+
 **Live FHIR API →** [proteinsynergydock-fhir-api.onrender.com/docs](https://proteinsynergydock-fhir-api.onrender.com/docs)
+
 **Tests →** ![Tests](https://github.com/Aprameya05/ProteinSynergyDock-App/actions/workflows/tests.yml/badge.svg)
 
 ---
