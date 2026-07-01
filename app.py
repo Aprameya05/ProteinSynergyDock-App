@@ -62,7 +62,6 @@ from core import (
 from model_bridge import predict_synergy, ModelUnavailableError
 from core_fhir import predict_to_fhir
 from audit_log import AuditLog
-
 def show_3d(pdb,pa,pb,na,nb,h=500):
     v=py3Dmol.view(width=750,height=h)
     v.addModel(pdb,'pdb'); v.setStyle({'model':0},{'cartoon':{'color':'spectrum','opacity':0.65}})
@@ -73,7 +72,8 @@ def show_3d(pdb,pa,pb,na,nb,h=500):
         v.addModel(pose_block(pb,'B'),'pdb')
         idx=2 if pa else 1
         v.setStyle({'model':idx},{'stick':{'colorscheme':'orangeCarbon','radius':0.2},'sphere':{'colorscheme':'orangeCarbon','scale':0.3}})
-    v.setBackgroundColor('#1a1a2e'); v.zoomTo({'model':1} if pa else {}); v.zoom(1.3)
+    v.setBackgroundColor('#1a1a2e')
+    v.zoomTo()
     components.html(v._make_html(),height=h+20,scrolling=False)
 
 def show_drugs(sa,sb,h=400):
@@ -567,7 +567,11 @@ with tab7:
 # ═══ TAB 8: RESISTANCE MUTATIONS ══════════════════════════════════════════════
 with tab8:
     st.header("🧬 Resistance Mutation Analysis")
-    st.markdown("Compare drug binding affinity against **wild-type vs mutant** cancer proteins.")
+    st.markdown(
+        "Compare real AutoDock Vina binding affinity for one drug against the "
+        "**wild-type protein vs known resistance mutant structures**. Each variant "
+        "is independently docked — these are not estimated or simulated numbers."
+    )
 
     col1,col2=st.columns(2)
     with col1:
@@ -577,56 +581,137 @@ with tab8:
             ["Vemurafenib","Erlotinib","Imatinib","Dasatinib","Crizotinib","Osimertinib","Gefitinib","Dabrafenib","Alectinib","Nilotinib"],
             key="res_drug_sel")
 
+    res_exhaustiveness=st.slider("Docking exhaustiveness",4,16,6,2,key="res_exh_sl",
+        help="Lower = faster. Each variant below is docked independently, so this analysis runs N times the work of a single Predict Synergy docking run.")
+
     gene_data=MUTATION_DB[target_gene]
     mutations=gene_data["mutations"]
+    n_variants=1+len(mutations)
+    st.caption(f"This will run {n_variants} independent docking jobs (1 wild-type + {len(mutations)} mutant{'s' if len(mutations)!=1 else ''}). May take a few minutes.")
 
     if st.button("🔬 Run Resistance Analysis",type="primary",key="btn_resistance"):
+        vina_cmd=find_vina(); obabel_cmd=shutil.which('obabel')
+        if not (vina_cmd and obabel_cmd):
+            st.error(
+                "⚠️ AutoDock Vina / OpenBabel not available in this environment — "
+                "real docking can't run here. This tab requires the same docking "
+                "tools as the Predict Synergy tab (available on the deployed app "
+                "via packages.txt)."
+            )
+            st.stop()
+
+        drug_smiles=DRUG_SMILES_LOOKUP.get(mut_drug)
+        if not drug_smiles:
+            st.error(f"No SMILES found for {mut_drug}."); st.stop()
+
         st.subheader(f"Resistance Profile: {mut_drug} vs {target_gene} variants")
-        import random
-        random.seed(hash(mut_drug+target_gene))
-        wt_affinity=round(random.uniform(-9.5,-7.0),2)
-        results=[{
-            "Variant":f"{target_gene} Wild-Type","PDB":gene_data["wild_type"],
-            "Binding Affinity (kcal/mol)":wt_affinity,"Delta vs WT":0.0,
-            "Resistance Level":"Reference","Clinical Impact":"Sensitive"
-        }]
+        variants_to_dock=[("Wild-Type",gene_data["wild_type"],None)]
         for mut_name,mut_info in mutations.items():
-            affected=mut_drug in mut_info["drugs_affected"]
-            if affected:
-                delta=round(random.uniform(1.5,4.2),2)
-                resistance="High" if delta>3 else "Moderate"
-                clinical="Resistant" if delta>3 else "Partially Resistant"
-            else:
-                delta=round(random.uniform(-0.5,0.8),2)
-                resistance="Low"; clinical="Sensitive"
-            results.append({
-                "Variant":f"{target_gene} {mut_name}","PDB":mut_info["pdb"],
-                "Binding Affinity (kcal/mol)":round(wt_affinity+delta,2),"Delta vs WT":delta,
-                "Resistance Level":resistance,"Clinical Impact":clinical
-            })
+            variants_to_dock.append((mut_name,mut_info["pdb"],mut_info))
+
+        prog=st.progress(0); stat=st.status("Docking each variant...",expanded=True)
+        results=[]
+        wt_affinity=None
+
+        with tempfile.TemporaryDirectory() as wd:
+            ligand_path=prepare_ligand(drug_smiles,"res_drug",wd)
+            if not ligand_path:
+                st.error(f"Could not prepare ligand for {mut_drug}."); st.stop()
+
+            for i,(variant_label,variant_pdb_id,mut_info) in enumerate(variants_to_dock):
+                with stat: st.write(f"📥 Fetching {variant_pdb_id} ({target_gene} {variant_label})...")
+                pdb_path=fetch_pdb(variant_pdb_id,wd)
+                if not pdb_path:
+                    with stat: st.write(f"❌ Could not fetch {variant_pdb_id} — skipping {variant_label}")
+                    results.append({
+                        "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
+                        "Binding Affinity (kcal/mol)":None,"Delta vs WT":None,
+                        "Resistance Level":"N/A (structure unavailable)","Clinical Impact":"N/A"
+                    })
+                    prog.progress(int((i+1)/n_variants*100))
+                    continue
+
+                center,size,_=get_binding_box(pdb_path)
+                rec_path=prepare_receptor(pdb_path,wd)
+                if not rec_path:
+                    with stat: st.write(f"❌ Could not prepare receptor for {variant_pdb_id} — skipping")
+                    results.append({
+                        "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
+                        "Binding Affinity (kcal/mol)":None,"Delta vs WT":None,
+                        "Resistance Level":"N/A (receptor prep failed)","Clinical Impact":"N/A"
+                    })
+                    prog.progress(int((i+1)/n_variants*100))
+                    continue
+
+                out_path=f'{wd}/res_{i}_out.pdbqt'
+                with stat: st.write(f"⚗️ Docking {mut_drug} into {target_gene} {variant_label} ({variant_pdb_id})...")
+                affinity,_=run_vina(vina_cmd,rec_path,ligand_path,center,size,out_path,res_exhaustiveness)
+
+                if affinity is None:
+                    with stat: st.write(f"❌ Docking failed for {variant_label}")
+                    results.append({
+                        "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
+                        "Binding Affinity (kcal/mol)":None,"Delta vs WT":None,
+                        "Resistance Level":"N/A (docking failed)","Clinical Impact":"N/A"
+                    })
+                    prog.progress(int((i+1)/n_variants*100))
+                    continue
+
+                if variant_label=="Wild-Type":
+                    wt_affinity=affinity
+                    delta=0.0
+                    resistance="Reference"; clinical="Sensitive"
+                else:
+                    delta=round(affinity-wt_affinity,2) if wt_affinity is not None else None
+                    if delta is None:
+                        resistance="N/A (wild-type docking failed)"; clinical="N/A"
+                    elif delta>1.5:
+                        resistance="High"; clinical="Resistant"
+                    elif delta>0.5:
+                        resistance="Moderate"; clinical="Partially Resistant"
+                    else:
+                        resistance="Low"; clinical="Sensitive"
+
+                with stat: st.write(f"✅ {target_gene} {variant_label}: {affinity:.2f} kcal/mol")
+                results.append({
+                    "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
+                    "Binding Affinity (kcal/mol)":round(affinity,2),
+                    "Delta vs WT":delta,
+                    "Resistance Level":resistance,"Clinical Impact":clinical
+                })
+                prog.progress(int((i+1)/n_variants*100))
+
+        with stat: st.write("✅ Complete!")
         df_res=pd.DataFrame(results)
-        colors=[]
-        for _,row in df_res.iterrows():
-            if row["Resistance Level"]=="Reference": colors.append("#4CAF50")
-            elif row["Resistance Level"]=="High": colors.append("#F44336")
-            elif row["Resistance Level"]=="Moderate": colors.append("#FF9800")
-            else: colors.append("#2196F3")
-        fig_res=go.Figure(go.Bar(
-            x=df_res["Variant"],y=df_res["Binding Affinity (kcal/mol)"],
-            marker_color=colors,
-            text=df_res["Delta vs WT"].apply(lambda x: f"Δ{x:+.2f}" if x!=0 else "WT"),
-            textposition="outside"))
-        fig_res.update_layout(
-            title=f"{mut_drug} Binding Affinity Across {target_gene} Variants",
-            yaxis_title="Binding Affinity (kcal/mol)",xaxis_title="Protein Variant",
-            template="plotly_dark",height=420,
-            yaxis=dict(range=[min(df_res["Binding Affinity (kcal/mol)"])-2,0]))
-        st.plotly_chart(fig_res,use_container_width=True)
+        valid=df_res[df_res["Binding Affinity (kcal/mol)"].notna()]
+
+        if valid.empty:
+            st.error("No variants successfully docked — try again or check the docking environment.")
+        else:
+            colors=[]
+            for _,row in valid.iterrows():
+                if row["Resistance Level"]=="Reference": colors.append("#4CAF50")
+                elif row["Resistance Level"]=="High": colors.append("#F44336")
+                elif row["Resistance Level"]=="Moderate": colors.append("#FF9800")
+                else: colors.append("#2196F3")
+            fig_res=go.Figure(go.Bar(
+                x=valid["Variant"],y=valid["Binding Affinity (kcal/mol)"],
+                marker_color=colors,
+                text=valid["Delta vs WT"].apply(lambda x: f"Δ{x:+.2f}" if x not in (0.0,None) else "WT"),
+                textposition="outside"))
+            fig_res.update_layout(
+                title=f"{mut_drug} Real Binding Affinity Across {target_gene} Variants (AutoDock Vina)",
+                yaxis_title="Binding Affinity (kcal/mol)",xaxis_title="Protein Variant",
+                template="plotly_dark",height=420,
+                yaxis=dict(range=[float(valid["Binding Affinity (kcal/mol)"].min())-2,0]))
+            st.plotly_chart(fig_res,use_container_width=True)
+
         st.dataframe(df_res.style.map(
             lambda v: "color: #F44336; font-weight: bold" if v=="High" else
                       ("color: #FF9800" if v=="Moderate" else
                        ("color: #4CAF50" if v=="Low" else "")),
             subset=["Resistance Level"]),use_container_width=True)
+
         st.subheader("📋 Mutation Clinical Notes")
         for mut_name,mut_info in mutations.items():
             affected_str="⚠️ Affects this drug" if mut_drug in mut_info["drugs_affected"] else "✅ Does not affect this drug"
