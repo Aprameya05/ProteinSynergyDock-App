@@ -19,6 +19,7 @@ import os
 import requests
 import shutil
 import subprocess
+
 # ── Model definitions ──────────────────────────────────────────────────────────
 class DrugEncoder(nn.Module):
     def __init__(self,in_dim=7,hidden=128,out_dim=256,heads=4):
@@ -237,11 +238,21 @@ def smiles_to_graph(smiles):
     mol=Chem.MolFromSmiles(smiles)
     if mol is None: return None
     try:
-        mol=Chem.AddHs(mol); AllChem.EmbedMolecule(mol,AllChem.ETKDGv3()); mol=Chem.RemoveHs(mol)
+        mol=Chem.AddHs(mol)
+        AllChem.EmbedMolecule(mol,AllChem.ETKDGv3())
+        # Energy minimization — corrects bond lengths and angles from the
+        # initial 3D embedding. MMFF94 is the standard force field for
+        # small organic molecules; not doing this leaves the GNN operating
+        # on geometrically unrealistic structures.
+        result = AllChem.MMFFOptimizeMolecule(mol, maxIters=2000)
+        if result == -1:  # MMFF setup failed, fall back to UFF
+            AllChem.UFFOptimizeMolecule(mol, maxIters=2000)
+        mol=Chem.RemoveHs(mol)
         if mol.GetNumConformers()==0: AllChem.Compute2DCoords(mol)
     except:
         try: AllChem.Compute2DCoords(mol)
         except: return None
+ 
     feats,pos=[],[]
     conf=mol.GetConformer() if mol.GetNumConformers()>0 else None
     for atom in mol.GetAtoms():
@@ -323,7 +334,7 @@ def run_vina(vina,rec,lig,center,size,out,exh=8):
     cmd=[vina,'--receptor',rec,'--ligand',lig,'--out',out,
          '--center_x',str(round(center[0],3)),'--center_y',str(round(center[1],3)),'--center_z',str(round(center[2],3)),
          '--size_x',str(round(size[0],3)),'--size_y',str(round(size[1],3)),'--size_z',str(round(size[2],3)),
-         '--exhaustiveness',str(exh),'--num_modes','3']
+         '--exhaustiveness',str(exh),'--num_modes','9']
     try:
         res=subprocess.run(cmd,capture_output=True,text=True,timeout=300)
         sc=None

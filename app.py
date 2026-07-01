@@ -10,7 +10,11 @@ import py3Dmol, numpy as np, os, requests, subprocess, tempfile, shutil, json
 import streamlit.components.v1 as components
 import plotly.graph_objects as go
 import pandas as pd
-
+from ligplot_utils import (
+        read_all_poses, generate_all_ligplots_zip,
+        parse_vina_affinities, find_interactions, generate_ligplot
+    )
+ 
 st.set_page_config(page_title="ProteinSynergyDock", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
 .main-header{text-align:center;padding:2rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);border-radius:12px;margin-bottom:2rem;}
@@ -231,6 +235,16 @@ with tab1:
                             dsb=sb; pb=read_pose(ob); dran=True
                             st.session_state['pb']=pb
                             with stat: st.write(f"✅ {name_b or 'Drug B'}: {sb:.2f} kcal/mol")
+                             # Store all 9 poses and affinities for both drugs
+                            st.session_state['all_poses_a'] = read_all_poses(oa)
+                            st.session_state['all_poses_b'] = read_all_poses(ob)
+                            st.session_state['affinities_a'] = parse_vina_affinities(oa)
+                            st.session_state['affinities_b'] = parse_vina_affinities(ob)
+                            st.session_state['pdb_content_for_ligplot'] = pdb_content
+                            st.session_state['smiles_a_for_ligplot'] = smiles_a
+                            st.session_state['smiles_b_for_ligplot'] = smiles_b
+                            st.session_state['name_a_for_ligplot'] = name_a or "Drug A"
+                            st.session_state['name_b_for_ligplot'] = name_b or "Drug B"
             else:
                 with stat: st.write("⚠️ Docking tools unavailable")
             st.session_state['dsa']=dsa; st.session_state['dsb']=dsb
@@ -258,6 +272,107 @@ with tab1:
                     st.caption(f"🔵 {name_a or 'Drug A'}  🟠 {name_b or 'Drug B'}  🎨 Protein  *Drag to rotate*")
                 else:
                     show_drugs(smiles_a,smiles_b)
+                # Store all 9 poses and affinities for both drugs
+        st.session_state['all_poses_a'] = read_all_poses(oa)
+        st.session_state['all_poses_b'] = read_all_poses(ob)
+        st.session_state['affinities_a'] = parse_vina_affinities(oa)
+        st.session_state['affinities_b'] = parse_vina_affinities(ob)
+        st.session_state['pdb_content_for_ligplot'] = pdb_content
+        st.session_state['smiles_a_for_ligplot'] = smiles_a
+        st.session_state['smiles_b_for_ligplot'] = smiles_b
+        st.session_state['name_a_for_ligplot'] = name_a or "Drug A"
+        st.session_state['name_b_for_ligplot'] = name_b or "Drug B"
+ 
+        if dran and st.session_state.get('all_poses_a'):
+            st.markdown("---")
+            st.subheader("🔬 Binding Pose Explorer")
+            
+            all_pa = st.session_state.get('all_poses_a', [])
+            all_pb = st.session_state.get('all_poses_b', [])
+            affs_a = st.session_state.get('affinities_a', [])
+            affs_b = st.session_state.get('affinities_b', [])
+            pdb_txt = st.session_state.get('pdb_content_for_ligplot', '')
+            smi_a   = st.session_state.get('smiles_a_for_ligplot', '')
+            smi_b   = st.session_state.get('smiles_b_for_ligplot', '')
+            n_a     = st.session_state.get('name_a_for_ligplot', 'Drug A')
+            n_b     = st.session_state.get('name_b_for_ligplot', 'Drug B')
+ 
+            n_poses = max(len(all_pa), len(all_pb))
+            if n_poses > 0:
+                pose_options = [
+                    f"Pose {i+1}" + (f"  ({affs_a[i]:.2f} kcal/mol)" if i < len(affs_a) else "")
+                    for i in range(n_poses)
+                ]
+                selected = st.select_slider(
+                    "Select binding pose",
+                    options=pose_options,
+                    key="pose_slider"
+                )
+                pose_idx = int(selected.split()[1]) - 1
+ 
+                # 3D viewer for selected pose
+                pa_sel = all_pa[pose_idx] if pose_idx < len(all_pa) else None
+                pb_sel = all_pb[pose_idx] if pose_idx < len(all_pb) else None
+                if pdb_txt and (pa_sel or pb_sel):
+                    show_3d(pdb_txt, pa_sel, pb_sel, n_a, n_b)
+ 
+                # LigPlot preview for selected pose
+                st.markdown("#### 🖼️ Interaction Diagram (LigPlot)")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if smi_a and pa_sel and pdb_txt:
+                        try:
+                            jpeg = generate_ligplot(
+                                smi_a, pa_sel, pdb_txt, pose_idx+1, n_a,
+                                affs_a[pose_idx] if pose_idx < len(affs_a) else None
+                            )
+                            st.image(jpeg, caption=f"{n_a} — Pose {pose_idx+1}", use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"LigPlot unavailable for {n_a}: {e}")
+                with col_b:
+                    if smi_b and pb_sel and pdb_txt:
+                        try:
+                            jpeg = generate_ligplot(
+                                smi_b, pb_sel, pdb_txt, pose_idx+1, n_b,
+                                affs_b[pose_idx] if pose_idx < len(affs_b) else None
+                            )
+                            st.image(jpeg, caption=f"{n_b} — Pose {pose_idx+1}", use_container_width=True)
+                        except Exception as e:
+                            st.warning(f"LigPlot unavailable for {n_b}: {e}")
+ 
+                # ZIP download buttons
+                st.markdown("#### 📦 Download All 9 LigPlot Diagrams")
+                dl_col1, dl_col2 = st.columns(2)
+                with dl_col1:
+                    if smi_a and all_pa and pdb_txt:
+                        try:
+                            zip_a = generate_all_ligplots_zip(
+                                smi_a, all_pa, pdb_txt, n_a, affs_a
+                            )
+                            st.download_button(
+                                f"⬇️ Download {n_a} LigPlots (ZIP)",
+                                data=zip_a,
+                                file_name=f"{n_a}_ligplots.zip",
+                                mime="application/zip",
+                                key="dl_ligplot_a"
+                            )
+                        except Exception as e:
+                            st.warning(f"ZIP unavailable: {e}")
+                with dl_col2:
+                    if smi_b and all_pb and pdb_txt:
+                        try:
+                            zip_b = generate_all_ligplots_zip(
+                                smi_b, all_pb, pdb_txt, n_b, affs_b
+                            )
+                            st.download_button(
+                                f"⬇️ Download {n_b} LigPlots (ZIP)",
+                                data=zip_b,
+                                file_name=f"{n_b}_ligplots.zip",
+                                mime="application/zip",
+                                key="dl_ligplot_b"
+                            )
+                        except Exception as e:
+                            st.warning(f"ZIP unavailable: {e}")    
             st.markdown("---\n### 📊 Results")
             verdict,color=get_verdict(syn)
             conf_label,conf_color=confidence_label(syn_std)
