@@ -272,88 +272,6 @@ with tab1:
                     st.caption(f"🔵 {name_a or 'Drug A'}  🟠 {name_b or 'Drug B'}  🧬 Protein  *Drag to rotate*")
                 else:
                     show_drugs(smiles_a,smiles_b)
-            if dran and st.session_state.get('all_poses_a'):
-                st.markdown("---")
-                st.subheader("🔬 Binding Pose Explorer")
-                all_pa = st.session_state.get('all_poses_a', [])
-                all_pb = st.session_state.get('all_poses_b', [])
-                affs_a = st.session_state.get('affinities_a', [])
-                affs_b = st.session_state.get('affinities_b', [])
-                pdb_txt = st.session_state.get('pdb_content_for_ligplot', '')
-                smi_a   = st.session_state.get('smiles_a_for_ligplot', '')
-                smi_b   = st.session_state.get('smiles_b_for_ligplot', '')
-                n_a     = st.session_state.get('name_a_for_ligplot', 'Drug A')
-                n_b     = st.session_state.get('name_b_for_ligplot', 'Drug B')
-                n_poses = max(len(all_pa), len(all_pb))
-                if n_poses > 0:
-                    pose_options = [
-                        f"Pose {i+1}" + (f"  ({affs_a[i]:.2f} kcal/mol)" if i < len(affs_a) else "")
-                        for i in range(n_poses)
-                    ]
-                    selected = st.select_slider(
-                        "Select binding pose",
-                        options=pose_options,
-                        key="pose_slider"
-                    )
-                    pose_idx = int(selected.split()[1]) - 1
-                    pa_sel = all_pa[pose_idx] if pose_idx < len(all_pa) else None
-                    pb_sel = all_pb[pose_idx] if pose_idx < len(all_pb) else None
-                    if pdb_txt and (pa_sel or pb_sel):
-                        show_3d(pdb_txt, pa_sel, pb_sel, n_a, n_b)
-                    st.markdown("#### 🖼️ Interaction Diagram (LigPlot)")
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        if smi_a and pa_sel and pdb_txt:
-                            try:
-                                jpeg = generate_ligplot(
-                                    smi_a, pa_sel, pdb_txt, pose_idx+1, n_a,
-                                    affs_a[pose_idx] if pose_idx < len(affs_a) else None
-                                )
-                                st.image(jpeg, caption=f"{n_a} — Pose {pose_idx+1}", use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"LigPlot unavailable for {n_a}: {e}")
-                    with col_b:
-                        if smi_b and pb_sel and pdb_txt:
-                            try:
-                                jpeg = generate_ligplot(
-                                    smi_b, pb_sel, pdb_txt, pose_idx+1, n_b,
-                                    affs_b[pose_idx] if pose_idx < len(affs_b) else None
-                                )
-                                st.image(jpeg, caption=f"{n_b} — Pose {pose_idx+1}", use_container_width=True)
-                            except Exception as e:
-                                st.warning(f"LigPlot unavailable for {n_b}: {e}")
-                    st.markdown("#### 📦 Download All 9 LigPlot Diagrams")
-                    dl_col1, dl_col2 = st.columns(2)
-                    with dl_col1:
-                        if smi_a and all_pa and pdb_txt:
-                            try:
-                                zip_a = generate_all_ligplots_zip(
-                                    smi_a, all_pa, pdb_txt, n_a, affs_a
-                                )
-                                st.download_button(
-                                    f"⬇️ Download {n_a} LigPlots (ZIP)",
-                                    data=zip_a,
-                                    file_name=f"{n_a}_ligplots.zip",
-                                    mime="application/zip",
-                                    key="dl_ligplot_a"
-                                )
-                            except Exception as e:
-                                st.warning(f"ZIP unavailable: {e}")
-                    with dl_col2:
-                        if smi_b and all_pb and pdb_txt:
-                            try:
-                                zip_b = generate_all_ligplots_zip(
-                                    smi_b, all_pb, pdb_txt, n_b, affs_b
-                                )
-                                st.download_button(
-                                    f"⬇️ Download {n_b} LigPlots (ZIP)",
-                                    data=zip_b,
-                                    file_name=f"{n_b}_ligplots.zip",
-                                    mime="application/zip",
-                                    key="dl_ligplot_b"
-                                )
-                            except Exception as e:
-                                st.warning(f"ZIP unavailable: {e}")
             st.markdown("---\n### 📊 Results")
             verdict,color=get_verdict(syn)
             conf_label,conf_color=confidence_label(syn_std)
@@ -422,6 +340,84 @@ Known: <strong>{ks:.2f}</strong> ({ksc}) | Predicted: <strong>{syn:.3f}</strong>
 | > 0.4 | Low confidence — treat the point estimate with caution |
 
 These thresholds are heuristic, the same way the synergy verdict bands are — they are not a calibrated probability guarantee, but they are a real signal: a wide MC Dropout spread genuinely means the model's internal representations disagree with each other on this input, which is exactly the situation where independent verification (literature search, clinical trial data, or wet-lab follow-up) matters most.""")
+
+    if st.session_state.get('all_poses_a'):
+        st.markdown("---")
+        st.subheader("🔬 Binding Pose Explorer")
+        all_pa  = st.session_state.get('all_poses_a', [])
+        all_pb  = st.session_state.get('all_poses_b', [])
+        affs_a  = st.session_state.get('affinities_a', [])
+        affs_b  = st.session_state.get('affinities_b', [])
+        pdb_txt = st.session_state.get('pdb_content_for_ligplot', '')
+        smi_a   = st.session_state.get('smiles_a_for_ligplot', '')
+        smi_b   = st.session_state.get('smiles_b_for_ligplot', '')
+        n_a     = st.session_state.get('name_a_for_ligplot', 'Drug A')
+        n_b     = st.session_state.get('name_b_for_ligplot', 'Drug B')
+        n_poses = max(len(all_pa), len(all_pb))
+        if n_poses > 0:
+            pose_options = [
+                f"Pose {i+1}" + (f"  ({affs_a[i]:.2f} kcal/mol)" if i < len(affs_a) else "")
+                for i in range(n_poses)
+            ]
+            selected = st.select_slider(
+                "Select binding pose", options=pose_options, key="pose_slider"
+            )
+            pose_idx = int(selected.split()[1]) - 1
+            pa_sel = all_pa[pose_idx] if pose_idx < len(all_pa) else None
+            pb_sel = all_pb[pose_idx] if pose_idx < len(all_pb) else None
+            if pdb_txt and (pa_sel or pb_sel):
+                show_3d(pdb_txt, pa_sel, pb_sel, n_a, n_b)
+                st.caption(f"🔵 {n_a}  🟠 {n_b}  🧬 Protein  *Drag to rotate*")
+            st.markdown("#### 🖼️ Interaction Diagrams (LigPlot)")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if smi_a and pa_sel and pdb_txt:
+                    try:
+                        jpeg_a = generate_ligplot(
+                            smi_a, pa_sel, pdb_txt, pose_idx+1, n_a,
+                            affs_a[pose_idx] if pose_idx < len(affs_a) else None
+                        )
+                        st.image(jpeg_a, caption=f"{n_a} — Pose {pose_idx+1}", use_container_width=True)
+                    except Exception as e:
+                        st.warning(f"LigPlot unavailable for {n_a}: {e}")
+                elif not pa_sel:
+                    st.info(f"No pose {pose_idx+1} data for {n_a}")
+            with col_b:
+                if smi_b and pb_sel and pdb_txt:
+                    try:
+                        jpeg_b = generate_ligplot(
+                            smi_b, pb_sel, pdb_txt, pose_idx+1, n_b,
+                            affs_b[pose_idx] if pose_idx < len(affs_b) else None
+                        )
+                        st.image(jpeg_b, caption=f"{n_b} — Pose {pose_idx+1}", use_container_width=True)
+                    except Exception as e:
+                        st.warning(f"LigPlot unavailable for {n_b}: {e}")
+                elif not pb_sel:
+                    st.info(f"No pose {pose_idx+1} data for {n_b}")
+            st.markdown("#### 📦 Download All LigPlot Diagrams")
+            dl_col1, dl_col2 = st.columns(2)
+            with dl_col1:
+                if smi_a and all_pa and pdb_txt:
+                    try:
+                        zip_a = generate_all_ligplots_zip(smi_a, all_pa, pdb_txt, n_a, affs_a)
+                        st.download_button(
+                            f"⬇️ {n_a} LigPlots ZIP ({len(all_pa)} poses)",
+                            data=zip_a, file_name=f"{n_a}_ligplots.zip",
+                            mime="application/zip", key="dl_ligplot_a"
+                        )
+                    except Exception as e:
+                        st.warning(f"ZIP unavailable: {e}")
+            with dl_col2:
+                if smi_b and all_pb and pdb_txt:
+                    try:
+                        zip_b = generate_all_ligplots_zip(smi_b, all_pb, pdb_txt, n_b, affs_b)
+                        st.download_button(
+                            f"⬇️ {n_b} LigPlots ZIP ({len(all_pb)} poses)",
+                            data=zip_b, file_name=f"{n_b}_ligplots.zip",
+                            mime="application/zip", key="dl_ligplot_b"
+                        )
+                    except Exception as e:
+                        st.warning(f"ZIP unavailable: {e}")
 
     if st.session_state.get('pa') or st.session_state.get('pb'):
         st.markdown("---")

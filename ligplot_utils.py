@@ -243,55 +243,56 @@ def generate_ligplot(
         )
     else:
         n = len(all_residues)
-        # Arrange residues in a half-ellipse on the right side
-        cx, cy = 7.5, 4.0   # center of ellipse
-        rx, ry = 3.5, 3.2   # semi-axes
+        # Spread residues in a 3/4 circle on the right side of the figure
+        # so they don't pile up at the top
+        cx, cy = 8.0, 4.0   # center of arc
+        rx, ry = 3.0, 2.8   # semi-axes
 
-        # Ligand anchor point (right edge of 2D image box, approximate)
-        lig_anchor = (3.2, 4.0)
+        # Ligand anchor — right-center edge of the 2D image panel
+        lig_anchor = (3.4, 4.0)
 
         for i, (res, dist, itype) in enumerate(all_residues):
-            angle = np.pi * 0.15 + (np.pi * 0.7) * i / max(n - 1, 1)
-            rx_i = rx + (0.4 if i % 2 == 0 else 0)  # stagger slightly
-            x = cx + rx_i * np.cos(angle)
-            y = cy + ry  * np.sin(angle)
+            # Spread from -120° to +120° (avoiding left side where ligand is)
+            frac = i / max(n - 1, 1)
+            angle = np.radians(-110 + 220 * frac)
+            x = cx + rx * np.cos(angle)
+            y = cy + ry * np.sin(angle)
 
             is_hbond = itype == "hbond"
-            box_color   = "#1a3a1a" if is_hbond else "#2a2a2a"
-            edge_color  = "#4caf50" if is_hbond else "#78909c"
-            line_color  = "#4caf50" if is_hbond else "#78909c"
-            line_style  = "--"
-            line_width  = 1.8 if is_hbond else 1.2
+            box_color  = "#1a3a1a" if is_hbond else "#2a2a2a"
+            edge_color = "#4caf50" if is_hbond else "#78909c"
+            line_color = "#4caf50" if is_hbond else "#78909c"
+            line_style = "--"
+            line_width = 1.8 if is_hbond else 1.2
 
-            # Draw line from ligand anchor to residue
             ax.plot(
                 [lig_anchor[0], x], [lig_anchor[1], y],
                 color=line_color, linestyle=line_style,
-                linewidth=line_width, alpha=0.8, zorder=1
+                linewidth=line_width, alpha=0.7, zorder=1
             )
 
-            # Distance label on line midpoint
-            mid_x = (lig_anchor[0] + x) / 2
-            mid_y = (lig_anchor[1] + y) / 2
             if is_hbond:
+                mid_x = lig_anchor[0] + 0.6 * (x - lig_anchor[0])
+                mid_y = lig_anchor[1] + 0.6 * (y - lig_anchor[1])
                 ax.text(
                     mid_x, mid_y, f"{dist} Å",
                     ha="center", va="center", fontsize=7,
                     color="#a5d6a7",
-                    bbox=dict(boxstyle="round,pad=0.15",
-                              facecolor="#1a2e1a", edgecolor="none", alpha=0.8)
+                    bbox=dict(boxstyle="round,pad=0.12",
+                              facecolor="#1a2e1a", edgecolor="none", alpha=0.85)
                 )
 
-            # Residue box
             box = FancyBboxPatch(
-                (x - 0.55, y - 0.28), 1.1, 0.56,
+                (x - 0.6, y - 0.3), 1.2, 0.6,
                 boxstyle="round,pad=0.05",
                 facecolor=box_color, edgecolor=edge_color,
                 linewidth=1.5, zorder=2
             )
             ax.add_patch(box)
+            # Truncate long residue names so they fit in the box
+            label = res[:8] if len(res) > 8 else res
             ax.text(
-                x, y, res,
+                x, y, label,
                 ha="center", va="center", fontsize=8, fontweight="bold",
                 color="#e0e0e0", zorder=3
             )
