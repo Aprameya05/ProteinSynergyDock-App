@@ -565,162 +565,338 @@ with tab7:
 | Same pathway | {'Yes ⚠️' if sp else 'No ✅'} | — |""")
 
 # ═══ TAB 8: RESISTANCE MUTATIONS ══════════════════════════════════════════════
+import re as _re
+import numpy as _np
+
+# ═══ TAB 8: RESISTANCE MUTATION ANALYSIS ════════════════════════════════════
 with tab8:
     st.header("🧬 Resistance Mutation Analysis")
     st.markdown(
-        "Compare real AutoDock Vina binding affinity for one drug against the "
-        "**wild-type protein vs known resistance mutant structures**. Each variant "
-        "is independently docked — these are not estimated or simulated numbers."
+        "Dock a drug into **wild-type and mutant** protein structures using real "
+        "AutoDock Vina. The mutation site is highlighted directly in the 3D viewer "
+        "so you can see exactly how far the mutation sits from the drug's binding pose."
     )
 
-    col1,col2=st.columns(2)
+    col1, col2 = st.columns(2)
     with col1:
-        target_gene=st.selectbox("Cancer Target Gene",list(MUTATION_DB.keys()),key="res_gene_sel")
+        target_gene = st.selectbox("Cancer Target Gene", list(MUTATION_DB.keys()), key="res_gene_sel")
     with col2:
-        mut_drug=st.selectbox("Drug to Test",
-            ["Vemurafenib","Erlotinib","Imatinib","Dasatinib","Crizotinib","Osimertinib","Gefitinib","Dabrafenib","Alectinib","Nilotinib"],
+        mut_drug = st.selectbox("Drug to Test",
+            ["Vemurafenib","Erlotinib","Imatinib","Dasatinib","Crizotinib",
+             "Osimertinib","Gefitinib","Dabrafenib","Alectinib","Nilotinib"],
             key="res_drug_sel")
 
-    res_exhaustiveness=st.slider("Docking exhaustiveness",4,16,6,2,key="res_exh_sl",
-        help="Lower = faster. Each variant below is docked independently, so this analysis runs N times the work of a single Predict Synergy docking run.")
+    res_exhaustiveness = st.slider("Docking exhaustiveness", 4, 16, 6, 2, key="res_exh_sl",
+        help="Each variant below is docked independently — N × the work of a single docking run.")
 
-    gene_data=MUTATION_DB[target_gene]
-    mutations=gene_data["mutations"]
-    n_variants=1+len(mutations)
-    st.caption(f"This will run {n_variants} independent docking jobs (1 wild-type + {len(mutations)} mutant{'s' if len(mutations)!=1 else ''}). May take a few minutes.")
+    gene_data   = MUTATION_DB[target_gene]
+    mutations   = gene_data["mutations"]
+    n_variants  = 1 + len(mutations)
+    st.caption(f"Will run {n_variants} independent docking jobs "
+               f"(1 wild-type + {len(mutations)} mutant{'s' if len(mutations)!=1 else ''}).")
 
-    if st.button("🔬 Run Resistance Analysis",type="primary",key="btn_resistance"):
-        vina_cmd=find_vina(); obabel_cmd=shutil.which('obabel')
+    def _residue_num(mut_name):
+        """Extract residue number from mutation label like 'V600E' → 600."""
+        m = _re.search(r'\d+', mut_name)
+        return int(m.group()) if m else None
+
+    def _drug_centroid(pose_atoms):
+        """Mean xyz of docked drug atoms."""
+        if not pose_atoms: return None
+        coords = _np.array([[a[1], a[2], a[3]] for a in pose_atoms])
+        return coords.mean(axis=0)
+
+    def _mutation_ca(pdb_text, resi):
+        """Find Cα coordinate of a given residue number in PDB text."""
+        if resi is None: return None
+        for line in pdb_text.splitlines():
+            if line.startswith(("ATOM","HETATM")) and line[12:16].strip() == "CA":
+                try:
+                    if int(line[22:26].strip()) == resi:
+                        return _np.array([float(line[30:38]), float(line[38:46]), float(line[46:54])])
+                except: pass
+        return None
+
+    def show_3d_resistance(pdb_text, drug_pose, mut_resi, variant_label,
+                           show_ribbon, show_mut, show_drug, show_surface, h=480):
+        """py3Dmol viewer for resistance analysis with toggleable layers."""
+        v = py3Dmol.view(width=700, height=h)
+        v.addModel(pdb_text, 'pdb')
+
+        if show_ribbon:
+            v.setStyle({'model': 0}, {'cartoon': {'color': 'spectrum', 'opacity': 0.55}})
+        else:
+            v.setStyle({'model': 0}, {})
+
+        if show_mut and mut_resi:
+            v.setStyle(
+                {'model': 0, 'resi': mut_resi},
+                {'sphere': {'color': '#FF5722', 'radius': 1.4},
+                 'stick':  {'color': '#FF5722', 'radius': 0.35}}
+            )
+            v.addLabel(
+                f"Mutation site (res {mut_resi})",
+                {'resi': mut_resi, 'model': 0,
+                 'backgroundColor': '#FF5722', 'fontColor': 'white',
+                 'fontSize': 11, 'backgroundOpacity': 0.85,
+                 'borderThickness': 1.0, 'borderColor': 'white'}
+            )
+
+        if show_surface:
+            v.addSurface('VDW',
+                {'opacity': 0.18, 'color': 'white'},
+                {'model': 0}
+            )
+
+        if show_drug and drug_pose:
+            v.addModel(pose_block(drug_pose, 'L'), 'pdb')
+            mdl_idx = 1
+            v.setStyle(
+                {'model': mdl_idx},
+                {'stick':   {'colorscheme': 'cyanCarbon', 'radius': 0.22},
+                 'sphere':  {'colorscheme': 'cyanCarbon', 'scale': 0.32}}
+            )
+
+        v.setBackgroundColor('#1a1a2e')
+        v.zoomTo()
+        components.html(v._make_html(), height=h + 20, scrolling=False)
+
+    if st.button("🔬 Run Resistance Analysis", type="primary", key="btn_resistance"):
+        vina_cmd   = find_vina()
+        obabel_cmd = shutil.which('obabel')
         if not (vina_cmd and obabel_cmd):
             st.error(
-                "⚠️ AutoDock Vina / OpenBabel not available in this environment — "
-                "real docking can't run here. This tab requires the same docking "
-                "tools as the Predict Synergy tab (available on the deployed app "
-                "via packages.txt)."
+                "⚠️ AutoDock Vina / OpenBabel not available in this environment. "
+                "This tab requires the same docking tools as the Predict Synergy tab "
+                "(available on the deployed app via packages.txt)."
             )
             st.stop()
 
-        drug_smiles=DRUG_SMILES_LOOKUP.get(mut_drug)
+        drug_smiles = DRUG_SMILES_LOOKUP.get(mut_drug)
         if not drug_smiles:
             st.error(f"No SMILES found for {mut_drug}."); st.stop()
 
-        st.subheader(f"Resistance Profile: {mut_drug} vs {target_gene} variants")
-        variants_to_dock=[("Wild-Type",gene_data["wild_type"],None)]
-        for mut_name,mut_info in mutations.items():
-            variants_to_dock.append((mut_name,mut_info["pdb"],mut_info))
+        variants_to_dock = [("Wild-Type", gene_data["wild_type"], None)]
+        for mn, mi in mutations.items():
+            variants_to_dock.append((mn, mi["pdb"], mi))
 
-        prog=st.progress(0); stat=st.status("Docking each variant...",expanded=True)
-        results=[]
-        wt_affinity=None
+        prog = st.progress(0)
+        stat = st.status("Running resistance docking pipeline...", expanded=True)
+        results   = []
+        wt_affinity = None
+
+        # Store per-variant viewer data in session state so toggles work post-run
+        st.session_state['res_variants'] = []
 
         with tempfile.TemporaryDirectory() as wd:
-            ligand_path=prepare_ligand(drug_smiles,"res_drug",wd)
+            ligand_path = prepare_ligand(drug_smiles, "res_drug", wd)
             if not ligand_path:
                 st.error(f"Could not prepare ligand for {mut_drug}."); st.stop()
 
-            for i,(variant_label,variant_pdb_id,mut_info) in enumerate(variants_to_dock):
-                with stat: st.write(f"📥 Fetching {variant_pdb_id} ({target_gene} {variant_label})...")
-                pdb_path=fetch_pdb(variant_pdb_id,wd)
+            for i, (variant_label, variant_pdb_id, mut_info) in enumerate(variants_to_dock):
+                with stat:
+                    st.write(f"📥 Fetching {variant_pdb_id} ({target_gene} {variant_label})...")
+
+                pdb_path = fetch_pdb(variant_pdb_id, wd)
                 if not pdb_path:
-                    with stat: st.write(f"❌ Could not fetch {variant_pdb_id} — skipping {variant_label}")
+                    with stat:
+                        st.write(f"❌ Could not fetch {variant_pdb_id} — skipping")
                     results.append({
-                        "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
-                        "Binding Affinity (kcal/mol)":None,"Delta vs WT":None,
-                        "Resistance Level":"N/A (structure unavailable)","Clinical Impact":"N/A"
+                        "Variant": f"{target_gene} {variant_label}", "PDB": variant_pdb_id,
+                        "Binding Affinity (kcal/mol)": None, "Delta vs WT": None,
+                        "Distance to Mutation (Å)": None,
+                        "Resistance Level": "N/A (structure unavailable)",
+                        "Clinical Impact": "N/A"
                     })
-                    prog.progress(int((i+1)/n_variants*100))
-                    continue
+                    prog.progress(int((i+1)/n_variants*100)); continue
 
-                center,size,_=get_binding_box(pdb_path)
-                rec_path=prepare_receptor(pdb_path,wd)
+                pdb_text = open(pdb_path).read()
+                center, size, _ = get_binding_box(pdb_path)
+                rec_path = prepare_receptor(pdb_path, wd)
                 if not rec_path:
-                    with stat: st.write(f"❌ Could not prepare receptor for {variant_pdb_id} — skipping")
+                    with stat:
+                        st.write(f"❌ Receptor prep failed for {variant_pdb_id} — skipping")
                     results.append({
-                        "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
-                        "Binding Affinity (kcal/mol)":None,"Delta vs WT":None,
-                        "Resistance Level":"N/A (receptor prep failed)","Clinical Impact":"N/A"
+                        "Variant": f"{target_gene} {variant_label}", "PDB": variant_pdb_id,
+                        "Binding Affinity (kcal/mol)": None, "Delta vs WT": None,
+                        "Distance to Mutation (Å)": None,
+                        "Resistance Level": "N/A (receptor prep failed)",
+                        "Clinical Impact": "N/A"
                     })
-                    prog.progress(int((i+1)/n_variants*100))
-                    continue
+                    prog.progress(int((i+1)/n_variants*100)); continue
 
-                out_path=f'{wd}/res_{i}_out.pdbqt'
-                with stat: st.write(f"⚗️ Docking {mut_drug} into {target_gene} {variant_label} ({variant_pdb_id})...")
-                affinity,_=run_vina(vina_cmd,rec_path,ligand_path,center,size,out_path,res_exhaustiveness)
+                # ── Parse mutation residue number ──────────────────────────
+                mut_resi = _residue_num(variant_label) if variant_label != "Wild-Type" else None
+
+                with stat:
+                    st.write(f"⚗️ Docking {mut_drug} → {target_gene} {variant_label} ({variant_pdb_id})...")
+
+                out_path = f'{wd}/res_{i}_out.pdbqt'
+                affinity, _ = run_vina(vina_cmd, rec_path, ligand_path,
+                                       center, size, out_path, res_exhaustiveness)
+                pose = read_pose(out_path)
+
+                # ── Proximity: distance from drug centroid to mutation Cα ──
+                dist = None
+                if pose and mut_resi:
+                    centroid  = _drug_centroid(pose)
+                    mut_coord = _mutation_ca(pdb_text, mut_resi)
+                    if centroid is not None and mut_coord is not None:
+                        dist = round(float(_np.linalg.norm(centroid - mut_coord)), 1)
 
                 if affinity is None:
                     with stat: st.write(f"❌ Docking failed for {variant_label}")
                     results.append({
-                        "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
-                        "Binding Affinity (kcal/mol)":None,"Delta vs WT":None,
-                        "Resistance Level":"N/A (docking failed)","Clinical Impact":"N/A"
+                        "Variant": f"{target_gene} {variant_label}", "PDB": variant_pdb_id,
+                        "Binding Affinity (kcal/mol)": None, "Delta vs WT": None,
+                        "Distance to Mutation (Å)": dist,
+                        "Resistance Level": "N/A (docking failed)",
+                        "Clinical Impact": "N/A"
                     })
-                    prog.progress(int((i+1)/n_variants*100))
-                    continue
+                    st.session_state['res_variants'].append({
+                        'label': variant_label, 'pdb_text': pdb_text,
+                        'pose': None, 'mut_resi': mut_resi,
+                        'affinity': None, 'dist': dist
+                    })
+                    prog.progress(int((i+1)/n_variants*100)); continue
 
-                if variant_label=="Wild-Type":
-                    wt_affinity=affinity
-                    delta=0.0
-                    resistance="Reference"; clinical="Sensitive"
+                if variant_label == "Wild-Type":
+                    wt_affinity = affinity
+                    delta = 0.0; resistance = "Reference"; clinical = "Sensitive"
                 else:
-                    delta=round(affinity-wt_affinity,2) if wt_affinity is not None else None
+                    delta = round(affinity - wt_affinity, 2) if wt_affinity is not None else None
                     if delta is None:
-                        resistance="N/A (wild-type docking failed)"; clinical="N/A"
-                    elif delta>1.5:
-                        resistance="High"; clinical="Resistant"
-                    elif delta>0.5:
-                        resistance="Moderate"; clinical="Partially Resistant"
+                        resistance = "N/A"; clinical = "N/A"
+                    elif delta > 1.5:
+                        resistance = "High"; clinical = "Resistant"
+                    elif delta > 0.5:
+                        resistance = "Moderate"; clinical = "Partially Resistant"
                     else:
-                        resistance="Low"; clinical="Sensitive"
+                        resistance = "Low"; clinical = "Sensitive"
 
-                with stat: st.write(f"✅ {target_gene} {variant_label}: {affinity:.2f} kcal/mol")
+                with stat:
+                    dist_str = f" | Mutation {dist} Å from binding site" if dist else ""
+                    st.write(f"✅ {target_gene} {variant_label}: {affinity:.2f} kcal/mol{dist_str}")
+
                 results.append({
-                    "Variant":f"{target_gene} {variant_label}","PDB":variant_pdb_id,
-                    "Binding Affinity (kcal/mol)":round(affinity,2),
-                    "Delta vs WT":delta,
-                    "Resistance Level":resistance,"Clinical Impact":clinical
+                    "Variant": f"{target_gene} {variant_label}", "PDB": variant_pdb_id,
+                    "Binding Affinity (kcal/mol)": round(affinity, 2),
+                    "Delta vs WT": delta,
+                    "Distance to Mutation (Å)": dist,
+                    "Resistance Level": resistance,
+                    "Clinical Impact": clinical
+                })
+                st.session_state['res_variants'].append({
+                    'label': variant_label, 'pdb_text': pdb_text,
+                    'pose': pose, 'mut_resi': mut_resi,
+                    'affinity': affinity, 'dist': dist
                 })
                 prog.progress(int((i+1)/n_variants*100))
 
-        with stat: st.write("✅ Complete!")
-        df_res=pd.DataFrame(results)
-        valid=df_res[df_res["Binding Affinity (kcal/mol)"].notna()]
+        with stat: st.write("✅ All variants complete!")
+        st.session_state['res_results']   = results
+        st.session_state['res_drug']      = mut_drug
+        st.session_state['res_gene']      = target_gene
 
-        if valid.empty:
-            st.error("No variants successfully docked — try again or check the docking environment.")
-        else:
-            colors=[]
-            for _,row in valid.iterrows():
-                if row["Resistance Level"]=="Reference": colors.append("#4CAF50")
-                elif row["Resistance Level"]=="High": colors.append("#F44336")
-                elif row["Resistance Level"]=="Moderate": colors.append("#FF9800")
-                else: colors.append("#2196F3")
-            fig_res=go.Figure(go.Bar(
-                x=valid["Variant"],y=valid["Binding Affinity (kcal/mol)"],
+    # ── Render results (persists across toggle interactions) ────────────────
+    if st.session_state.get('res_variants'):
+        st.markdown("---")
+        st.subheader(f"3D Docking Views — {st.session_state.get('res_drug','')} vs {st.session_state.get('res_gene','')} variants")
+
+        # Toggle controls
+        tcol1, tcol2, tcol3, tcol4 = st.columns(4)
+        show_ribbon  = tcol1.checkbox("🎀 Protein ribbon",  value=True,  key="tog_ribbon")
+        show_mut     = tcol2.checkbox("🔴 Mutation site",   value=True,  key="tog_mut")
+        show_drug    = tcol3.checkbox("💊 Docked drug",     value=True,  key="tog_drug")
+        show_surface = tcol4.checkbox("🫧 Surface",         value=False, key="tog_surface")
+
+        for vdata in st.session_state['res_variants']:
+            lbl      = vdata['label']
+            affinity = vdata['affinity']
+            dist     = vdata['dist']
+            mut_resi = vdata['mut_resi']
+
+            aff_str  = f"{affinity:.2f} kcal/mol" if affinity else "Docking failed"
+            dist_str = f" · Mutation {dist} Å from binding site" if dist else ""
+            mut_str  = f" · Mutation residue: {mut_resi}" if mut_resi else ""
+            is_wt    = lbl == "Wild-Type"
+            badge    = "🟢 Wild-Type" if is_wt else f"🔴 {target_gene} {lbl}"
+
+            with st.expander(f"{badge}  —  {aff_str}{dist_str}{mut_str}", expanded=True):
+                show_3d_resistance(
+                    pdb_text=vdata['pdb_text'],
+                    drug_pose=vdata['pose'],
+                    mut_resi=mut_resi,
+                    variant_label=lbl,
+                    show_ribbon=show_ribbon,
+                    show_mut=show_mut,
+                    show_drug=show_drug,
+                    show_surface=show_surface,
+                )
+                if dist and mut_resi:
+                    proximity_note = (
+                        f"🔴 **{dist} Å** — mutation is within direct binding influence (<5 Å)"
+                        if dist < 5 else
+                        f"🟡 **{dist} Å** — mutation is near the binding site (5–10 Å)"
+                        if dist < 10 else
+                        f"🟢 **{dist} Å** — mutation is distant from binding site (>10 Å)"
+                    )
+                    st.caption(f"📏 Drug centroid → mutation Cα distance: {proximity_note}")
+
+        # Summary chart
+        st.markdown("---")
+        st.subheader("📊 Binding Affinity Comparison")
+        df_res = pd.DataFrame(st.session_state['res_results'])
+        valid  = df_res[df_res["Binding Affinity (kcal/mol)"].notna()]
+        if not valid.empty:
+            colors = []
+            for _, row in valid.iterrows():
+                if row["Resistance Level"] == "Reference":   colors.append("#4CAF50")
+                elif row["Resistance Level"] == "High":      colors.append("#F44336")
+                elif row["Resistance Level"] == "Moderate":  colors.append("#FF9800")
+                else:                                         colors.append("#2196F3")
+            fig_res = go.Figure(go.Bar(
+                x=valid["Variant"], y=valid["Binding Affinity (kcal/mol)"],
                 marker_color=colors,
-                text=valid["Delta vs WT"].apply(lambda x: f"Δ{x:+.2f}" if x not in (0.0,None) else "WT"),
-                textposition="outside"))
+                text=valid["Delta vs WT"].apply(lambda x: f"Δ{x:+.2f}" if x not in (0.0, None) else "WT"),
+                textposition="outside"
+            ))
             fig_res.update_layout(
-                title=f"{mut_drug} Real Binding Affinity Across {target_gene} Variants (AutoDock Vina)",
-                yaxis_title="Binding Affinity (kcal/mol)",xaxis_title="Protein Variant",
-                template="plotly_dark",height=420,
-                yaxis=dict(range=[float(valid["Binding Affinity (kcal/mol)"].min())-2,0]))
-            st.plotly_chart(fig_res,use_container_width=True)
+                title=f"{st.session_state.get('res_drug','')} Real Binding Affinity "
+                      f"Across {st.session_state.get('res_gene','')} Variants (AutoDock Vina)",
+                yaxis_title="Binding Affinity (kcal/mol)",
+                xaxis_title="Protein Variant",
+                template="plotly_dark", height=420,
+                yaxis=dict(range=[float(valid["Binding Affinity (kcal/mol)"].min())-2, 0])
+            )
+            st.plotly_chart(fig_res, use_container_width=True)
 
-        st.dataframe(df_res.style.map(
-            lambda v: "color: #F44336; font-weight: bold" if v=="High" else
-                      ("color: #FF9800" if v=="Moderate" else
-                       ("color: #4CAF50" if v=="Low" else "")),
-            subset=["Resistance Level"]),use_container_width=True)
+        st.dataframe(
+            df_res.style.map(
+                lambda v: "color: #F44336; font-weight: bold" if v=="High" else
+                          ("color: #FF9800" if v=="Moderate" else
+                           ("color: #4CAF50" if v=="Low" else "")),
+                subset=["Resistance Level"]
+            ), use_container_width=True
+        )
 
         st.subheader("📋 Mutation Clinical Notes")
-        for mut_name,mut_info in mutations.items():
-            affected_str="⚠️ Affects this drug" if mut_drug in mut_info["drugs_affected"] else "✅ Does not affect this drug"
+        for mut_name, mut_info in mutations.items():
+            affected_str = ("⚠️ Affects this drug"
+                           if st.session_state.get('res_drug','') in mut_info["drugs_affected"]
+                           else "✅ Does not affect this drug")
             with st.expander(f"{target_gene} {mut_name} — {affected_str}"):
                 st.markdown(f"**Mechanism:** {mut_info['description']}")
                 st.markdown(f"**Drugs affected:** {', '.join(mut_info['drugs_affected'])}")
                 st.markdown(f"**PDB Structure:** `{mut_info['pdb']}`")
-        if mut_drug in ["Vemurafenib","Erlotinib","Imatinib"] and target_gene in ["BRAF","EGFR","BCR-ABL"]:
-            st.info(f"💡 For {mut_drug}-resistant {target_gene} mutations, consider next-generation inhibitors or combination strategies in the Predict Synergy tab.")
+
+        if (st.session_state.get('res_drug','') in ["Vemurafenib","Erlotinib","Imatinib"]
+                and st.session_state.get('res_gene','') in ["BRAF","EGFR","BCR-ABL"]):
+            st.info(
+                f"💡 For {st.session_state.get('res_drug','')} -resistant "
+                f"{st.session_state.get('res_gene','')} mutations, consider "
+                f"next-generation inhibitors or combination strategies in the Predict Synergy tab."
+            )
 
 # ═══ TAB 9: 4D TRAJECTORY ═════════════════════════════════════════════════════
 with tab9:
