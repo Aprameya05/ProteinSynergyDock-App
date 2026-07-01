@@ -37,6 +37,7 @@ jobs:
           pip install torch --quiet
           pip install torch_geometric --quiet
           pip install fastapi uvicorn httpx pydantic
+          pip install python-multipart
 
       - name: Run test suite
         run: pytest tests/ -v --tb=short
