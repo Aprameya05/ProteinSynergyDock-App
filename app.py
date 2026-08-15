@@ -66,6 +66,12 @@ from core import (
 from model_bridge import predict_synergy, ModelUnavailableError
 from core_fhir import predict_to_fhir
 from audit_log import AuditLog
+from admet_utils import (
+    compute_admet, morgan_similarity, chemical_space_pca, tanimoto_matrix,
+    bliss_analysis, combination_index, dose_response_hill, synergy_dose_matrix,
+    drug_feature_importance_bar, get_pharmacophore_features,
+    generate_html_report, similarity_interpretation,
+)
 def show_3d(pdb,pa,pb,na,nb,h=500):
     v=py3Dmol.view(width=750,height=h)
     v.addModel(pdb,'pdb'); v.setStyle({'model':0},{'cartoon':{'color':'spectrum','opacity':0.65}})
@@ -132,11 +138,13 @@ with st.sidebar:
 {h['cell_line']} | Score: {h['score']:.3f} | {h['verdict'].split()[0]}</div>""", unsafe_allow_html=True)
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
-tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11,tab12 = st.tabs([
+tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11,tab12,tab13,tab14,tab15,tab16,tab17 = st.tabs([
     "🔬 Predict Synergy","🌐 Synergy Landscape","📊 Cell Line Comparison",
     "🏥 Clinical Trials","📚 Literature","💊 Drug Repurposing",
     "⚙️ Mechanism Explorer","🧬 Resistance Mutations","🎬 4D Trajectory","💬 Query",
-    "🕸️ Polypharmacology Network","🏥 Clinical Interop"
+    "🕸️ Polypharmacology Network","🏥 Clinical Interop",
+    "🧪 ADMET Analysis","⚗️ Chemical Space","🎯 Combination Index",
+    "🔍 Explainability","📝 Report",
 ])
 # ═══ TAB 1 ════════════════════════════════════════════════════════════════════
 with tab1:
@@ -302,6 +310,48 @@ randomly dropped; a wide spread means the model itself is uncertain about this s
             st.session_state.history.insert(0,{'drug_a':name_a or 'Drug A','drug_b':name_b or 'Drug B',
                 'cell_line':cell_line,'score':syn,'verdict':verdict,'dock_a':dsa,'dock_b':dsb})
             st.session_state.history=st.session_state.history[:5]
+            # ── Tanimoto similarity warning ───────────────────────────────
+            if smiles_a and smiles_b:
+                _tan = morgan_similarity(smiles_a, smiles_b)
+                st.session_state['tanimoto'] = _tan
+                if _tan is not None:
+                    _sim_label, _sim_note = similarity_interpretation(_tan)
+                    _sim_color = "#3a1e1e" if _tan >= 0.65 else "#1e2a1e"
+                    _sim_border = "#f85149" if _tan >= 0.65 else "#56d364"
+                    st.markdown(
+                        f'<div style="background:{_sim_color};border-left:4px solid {_sim_border};'
+                        f'padding:10px;border-radius:6px;margin:8px 0;color:white;">'
+                        f'<b>🔬 ECFP4 Tanimoto Similarity: {_tan:.3f}</b> — {_sim_label}<br>'
+                        f'<small>{_sim_note}</small></div>',
+                        unsafe_allow_html=True
+                    )
+            # ── Quick inline ADMET snapshot ───────────────────────────────
+            _admet_a = compute_admet(smiles_a) if smiles_a else None
+            _admet_b = compute_admet(smiles_b) if smiles_b else None
+            st.session_state['admet_a'] = _admet_a
+            st.session_state['admet_b'] = _admet_b
+            st.session_state['admet_a_smi'] = smiles_a
+            st.session_state['admet_b_smi'] = smiles_b
+            if _admet_a and _admet_b:
+                with st.expander("🧪 Quick ADMET Snapshot (computed from SMILES)"):
+                    _ac1, _ac2 = st.columns(2)
+                    with _ac1:
+                        st.markdown(f"**{name_a or 'Drug A'}**")
+                        st.metric("MW", f"{_admet_a['MW']} Da")
+                        st.metric("LogP", _admet_a['LogP'])
+                        st.metric("QED", _admet_a['QED'])
+                        st.metric("Solubility", _admet_a['Solubility'])
+                        st.metric("BBB Penetrant", "✅" if _admet_a['BBB Penetrant'] else "❌")
+                        st.metric("Lipinski", "✅ Pass" if _admet_a['Lipinski Pass'] else "❌ Fail")
+                    with _ac2:
+                        st.markdown(f"**{name_b or 'Drug B'}**")
+                        st.metric("MW", f"{_admet_b['MW']} Da")
+                        st.metric("LogP", _admet_b['LogP'])
+                        st.metric("QED", _admet_b['QED'])
+                        st.metric("Solubility", _admet_b['Solubility'])
+                        st.metric("BBB Penetrant", "✅" if _admet_b['BBB Penetrant'] else "❌")
+                        st.metric("Lipinski", "✅ Pass" if _admet_b['Lipinski Pass'] else "❌ Fail")
+                    st.caption("Full breakdown in the 🧪 ADMET Analysis tab")
             if known:
                 ks,ksc=known
                 st.markdown(f"""<div class="known-score">📚 <strong>NCI ALMANAC Ground Truth</strong><br>
@@ -1286,3 +1336,419 @@ with tab12:
         "🔗 Live API: this same logic is also exposed as a public REST endpoint at "
         "[proteinsynergydock-fhir-api.onrender.com/docs](https://proteinsynergydock-fhir-api.onrender.com/docs)"
     )
+
+# ═══ TAB 13: ADMET Analysis ════════════════════════════════════════════════════
+with tab13:
+    st.markdown("### 🧪 ADMET Property Analysis")
+    st.markdown(
+        "Every number here is **computed live from your SMILES** using RDKit — "
+        "no lookup table, no hardcoding."
+    )
+    _a13_c1, _a13_c2 = st.columns(2)
+    with _a13_c1:
+        _a13_smi_a = st.text_area(
+            "Drug A SMILES", height=80, key="admet_smi_a",
+            value=st.session_state.get('admet_a_smi', ''),
+            placeholder="Paste SMILES or run Predict Synergy first"
+        )
+    with _a13_c2:
+        _a13_smi_b = st.text_area(
+            "Drug B SMILES", height=80, key="admet_smi_b",
+            value=st.session_state.get('admet_b_smi', ''),
+            placeholder="Paste SMILES or run Predict Synergy first"
+        )
+    if st.button("⚗️ Compute ADMET Properties", key="admet_btn", type="primary"):
+        if not _a13_smi_a or not _a13_smi_b:
+            st.error("Enter SMILES for both drugs (or run Predict Synergy first to auto-fill).")
+            st.stop()
+        _adm_a_new = compute_admet(_a13_smi_a)
+        _adm_b_new = compute_admet(_a13_smi_b)
+        if not _adm_a_new: st.error("Invalid SMILES for Drug A."); st.stop()
+        if not _adm_b_new: st.error("Invalid SMILES for Drug B."); st.stop()
+        st.session_state['admet_a'] = _adm_a_new
+        st.session_state['admet_b'] = _adm_b_new
+        st.session_state['admet_a_smi'] = _a13_smi_a
+        st.session_state['admet_b_smi'] = _a13_smi_b
+        st.session_state['tanimoto'] = morgan_similarity(_a13_smi_a, _a13_smi_b)
+    _adm_a = st.session_state.get('admet_a')
+    _adm_b = st.session_state.get('admet_b')
+    if _adm_a and _adm_b:
+        _tan13 = st.session_state.get('tanimoto')
+        if _tan13 is not None:
+            _sl, _sn = similarity_interpretation(_tan13)
+            _sc = "#3a1e1e" if _tan13 >= 0.65 else "#1a2a3a"
+            _sb = "#f85149" if _tan13 >= 0.65 else "#4fc3f7"
+            st.markdown(
+                f'<div style="background:{_sc};border-left:4px solid {_sb};padding:12px;border-radius:6px;margin:12px 0;color:white;">'
+                f'<b>ECFP4 Tanimoto Similarity: {_tan13:.3f}</b> — {_sl}<br><small>{_sn}</small></div>',
+                unsafe_allow_html=True
+            )
+        st.markdown("#### 📡 Drug-likeness Radar")
+        _radar_labels = ["QED","Drug-likeness","Absorption","Fsp3×2","TPSA↓","MW↓","LogP (opt)"]
+        def _norm_admet_vals(d):
+            return [d.get("QED",0),d.get("Drug-likeness",0),d.get("Absorption",0),
+                    min(d.get("Fsp3",0)*2,1),max(0.,1.-d.get("TPSA",0)/140),
+                    max(0.,1.-d.get("MW",0)/700),max(0.,1.-abs(d.get("LogP",0)-2.5)/5)]
+        _va13=_norm_admet_vals(_adm_a); _vb13=_norm_admet_vals(_adm_b)
+        _da_name_r=st.session_state.get('name_a','Drug A') or 'Drug A'
+        _db_name_r=st.session_state.get('name_b','Drug B') or 'Drug B'
+        _fig_radar=go.Figure()
+        _fig_radar.add_trace(go.Scatterpolar(r=_va13+[_va13[0]],theta=_radar_labels+[_radar_labels[0]],
+            fill='toself',fillcolor='rgba(79,195,247,0.18)',line=dict(color='#4fc3f7',width=2),name=_da_name_r))
+        _fig_radar.add_trace(go.Scatterpolar(r=_vb13+[_vb13[0]],theta=_radar_labels+[_radar_labels[0]],
+            fill='toself',fillcolor='rgba(255,152,0,0.18)',line=dict(color='#ff9800',width=2),name=_db_name_r))
+        _fig_radar.update_layout(polar=dict(radialaxis=dict(visible=True,range=[0,1])),
+            height=430,paper_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),showlegend=True,
+            title=dict(text="Drug-likeness Radar (normalized 0–1)",font=dict(color='#4fc3f7')))
+        st.plotly_chart(_fig_radar,use_container_width=True)
+        st.markdown("#### 📋 Full ADMET Comparison")
+        _prop_groups=[
+            ("Physicochemical",["MW","LogP","TPSA","HBD","HBA","Rotatable Bonds","Rings","Aromatic Rings","Heavy Atoms","Fsp3","Stereocenters","Halogens"]),
+            ("Drug-likeness",["QED","Drug-likeness","Lipinski Pass","Lipinski Violations","Veber Pass"]),
+            ("ADME",["ESOL LogS","ESOL mol/L","Solubility","BBB Penetrant","BBB Score","Pgp Substrate","CYP3A4 Substrate","CYP2D6 Inhibitor","Absorption"]),
+        ]
+        for _grp_name,_keys in _prop_groups:
+            st.markdown(f"**{_grp_name}**")
+            _rows=[]
+            for _k in _keys:
+                _va2=_adm_a.get(_k,'—'); _vb2=_adm_b.get(_k,'—')
+                if isinstance(_va2,bool): _va2="✅" if _va2 else "❌"
+                if isinstance(_vb2,bool): _vb2="✅" if _vb2 else "❌"
+                _rows.append({"Property":_k,_da_name_r:_va2,_db_name_r:_vb2})
+            st.dataframe(pd.DataFrame(_rows),use_container_width=True,hide_index=True)
+        with st.expander("📏 Lipinski Rule of 5 Detail"):
+            _lip_c1,_lip_c2=st.columns(2)
+            for _lc,_adm,_nm in [(_lip_c1,_adm_a,_da_name_r),(_lip_c2,_adm_b,_db_name_r)]:
+                _lc.markdown(f"**{_nm}**")
+                for _rule,_passed in _adm.get("Lipinski",{}).items():
+                    _lc.markdown(f"{'✅' if _passed else '❌'} {_rule}")
+                _lc.markdown(f"**Violations:** {_adm.get('Lipinski Violations',0)}/4 → {'✅ Pass' if _adm.get('Lipinski Pass') else '❌ Fail'}")
+        with st.expander("🔮 Pharmacophore Feature Comparison"):
+            _pharm_a=get_pharmacophore_features(st.session_state.get('admet_a_smi',''))
+            _pharm_b=get_pharmacophore_features(st.session_state.get('admet_b_smi',''))
+            if _pharm_a and _pharm_b:
+                _pharm_keys=list(_pharm_a.keys())
+                _fig_pharm=go.Figure()
+                _fig_pharm.add_trace(go.Bar(name=_da_name_r,x=_pharm_keys,y=[_pharm_a.get(f,0) for f in _pharm_keys],marker_color='#4fc3f7'))
+                _fig_pharm.add_trace(go.Bar(name=_db_name_r,x=_pharm_keys,y=[_pharm_b.get(f,0) for f in _pharm_keys],marker_color='#ff9800'))
+                _fig_pharm.update_layout(barmode='group',height=360,xaxis=dict(tickangle=-30),
+                    paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),
+                    title=dict(text="Pharmacophore Feature Counts",font=dict(color='#4fc3f7')))
+                st.plotly_chart(_fig_pharm,use_container_width=True)
+    else:
+        st.info("Enter SMILES above and click **Compute ADMET Properties**, or run **🔬 Predict Synergy** first — it auto-populates this tab.")
+
+# ═══ TAB 14: Chemical Space ════════════════════════════════════════════════════
+with tab14:
+    st.markdown("### ⚗️ Chemical Space Explorer")
+    st.markdown("**PCA of Morgan ECFP4 fingerprints** across all 30+ drugs in the database. Drugs close together share structural features. Everything computed live.")
+    _cs_h_c1,_cs_h_c2=st.columns(2)
+    with _cs_h_c1:
+        _cs_da=st.selectbox("Highlight Drug A:",["None"]+sorted(DRUG_SMILES_LOOKUP.keys()),key="cs_da_sel")
+    with _cs_h_c2:
+        _cs_db=st.selectbox("Highlight Drug B:",["None"]+sorted(DRUG_SMILES_LOOKUP.keys()),key="cs_db_sel")
+    _cs_highlight=[d for d in [_cs_da,_cs_db] if d!="None"]
+    for _pn in [st.session_state.get('name_a',''),st.session_state.get('name_b','')]:
+        if _pn and _pn in DRUG_SMILES_LOOKUP and _pn not in _cs_highlight:
+            _cs_highlight.append(_pn)
+    if st.button("🔭 Compute Chemical Space (PCA)",key="cs_btn",type="primary"):
+        with st.spinner("Computing Morgan fingerprints + PCA..."):
+            _cs_coords,_cs_var=chemical_space_pca(DRUG_SMILES_LOOKUP,highlight=_cs_highlight)
+        st.session_state['cs_coords']=_cs_coords
+        st.session_state['cs_var']=_cs_var
+    _cs_coords=st.session_state.get('cs_coords',{})
+    _cs_var=st.session_state.get('cs_var',(0,0))
+    if _cs_coords:
+        _cs_names=list(_cs_coords.keys())
+        _cs_x=[_cs_coords[n]["x"] for n in _cs_names]
+        _cs_y=[_cs_coords[n]["y"] for n in _cs_names]
+        _cs_hl=[_cs_coords[n]["highlighted"] for n in _cs_names]
+        _cls_colors={"BRAF inhibitor":"#ef5350","MEK inhibitor":"#ff7043","EGFR TKI":"#42a5f5",
+            "TKI":"#7e57c2","3rd gen EGFR TKI":"#29b6f6","Dual TKI":"#26c6da","Pan-HER TKI":"#00bcd4",
+            "PARP inhibitor":"#66bb6a","CDK4/6 inhibitor":"#ffca28","BTK inhibitor":"#ffa726",
+            "BCL-2 inhibitor":"#8d6e63","PI3K inhibitor":"#d4e157","Taxane":"#ff80ab",
+            "Anthracycline":"#e040fb","Antimetabolite":"#69f0ae","ALK inhibitor":"#40c4ff",
+            "HDAC inhibitor":"#ea80fc","Multi-TKI":"#f48fb1","Alkylating agent":"#b0bec5","Unknown":"#546e7a"}
+        _cls_map={n:DRUG_MECHANISMS.get(n,{}).get('class','Unknown') for n in _cs_names}
+        _all_classes=sorted(set(_cls_map.values()))
+        _cs_fig=go.Figure()
+        for _cls in _all_classes:
+            _idxs=[i for i,n in enumerate(_cs_names) if _cls_map[n]==_cls and not _cs_hl[i]]
+            if not _idxs: continue
+            _cs_fig.add_trace(go.Scatter(x=[_cs_x[i] for i in _idxs],y=[_cs_y[i] for i in _idxs],
+                mode='markers+text',name=_cls,text=[_cs_names[i] for i in _idxs],textposition='top center',
+                textfont=dict(size=9,color='#8b949e'),marker=dict(size=11,color=_cls_colors.get(_cls,'#546e7a'),opacity=0.8),
+                hovertemplate='<b>%{text}</b><br>Class: '+_cls+'<br>PC1: %{x:.2f}<br>PC2: %{y:.2f}<extra></extra>'))
+        if any(_cs_hl):
+            _h_idxs=[i for i,h in enumerate(_cs_hl) if h]
+            _cs_fig.add_trace(go.Scatter(x=[_cs_x[i] for i in _h_idxs],y=[_cs_y[i] for i in _h_idxs],
+                mode='markers+text',name="⭐ Your Drugs",text=[_cs_names[i] for i in _h_idxs],
+                textposition='top center',textfont=dict(size=12,color='#FFD700'),
+                marker=dict(size=20,color='#FFD700',symbol='star',line=dict(color='white',width=2)),
+                hovertemplate='<b>%{text}</b> ⭐<extra></extra>'))
+        _v0=_cs_var[0]*100 if len(_cs_var)>0 else 0
+        _v1=_cs_var[1]*100 if len(_cs_var)>1 else 0
+        _cs_fig.update_layout(height=620,
+            xaxis=dict(title=f"PC1 ({_v0:.1f}% variance)",zeroline=True,zerolinecolor='#30363d'),
+            yaxis=dict(title=f"PC2 ({_v1:.1f}% variance)",zeroline=True,zerolinecolor='#30363d'),
+            paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),
+            title=dict(text="Chemical Space — Morgan ECFP4 PCA",font=dict(color='#4fc3f7')),
+            legend=dict(bgcolor='rgba(22,27,34,0.85)',bordercolor='#30363d',borderwidth=1),hovermode='closest')
+        st.plotly_chart(_cs_fig,use_container_width=True)
+        st.caption(f"PCA of {len(_cs_coords)} drugs · {_v0+_v1:.1f}% variance · ⭐ = your drugs")
+        with st.expander("🌡️ Pairwise Tanimoto Similarity Heatmap"):
+            with st.spinner("Computing similarity matrix..."):
+                _tan_names,_tan_mat=tanimoto_matrix(DRUG_SMILES_LOOKUP)
+            _hm_fig=go.Figure(data=go.Heatmap(z=_tan_mat.tolist(),x=_tan_names,y=_tan_names,
+                colorscale=[[0,'#1a237e'],[0.4,'#0d47a1'],[0.7,'#1565c0'],[0.9,'#e53935'],[1,'#b71c1c']],
+                zmin=0,zmax=1,hovertemplate='%{y} vs %{x}<br>Tanimoto: %{z:.3f}<extra></extra>',
+                colorbar=dict(title="Tanimoto")))
+            _hm_fig.update_layout(height=820,xaxis=dict(tickangle=-45,tickfont=dict(size=9)),
+                yaxis=dict(tickfont=dict(size=9)),paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color='white'),margin=dict(l=160,r=20,t=30,b=160),
+                title=dict(text="Pairwise Tanimoto Similarity Matrix",font=dict(color='#4fc3f7')))
+            st.plotly_chart(_hm_fig,use_container_width=True)
+            st.caption("Red cells (Tanimoto > 0.85) indicate near-identical scaffolds — pairs there likely compete rather than synergize.")
+        if _cs_highlight:
+            st.markdown("#### 🔍 Nearest Structural Neighbours")
+            _all_tan_names,_all_tan_mat=tanimoto_matrix(DRUG_SMILES_LOOKUP)
+            for _hn in _cs_highlight:
+                if _hn not in _all_tan_names: continue
+                _hi=_all_tan_names.index(_hn)
+                _sims=[(_all_tan_names[j],float(_all_tan_mat[_hi,j])) for j in range(len(_all_tan_names)) if _all_tan_names[j]!=_hn]
+                _sims.sort(key=lambda x:x[1],reverse=True)
+                st.markdown(f"**{_hn}** — 5 closest drugs:")
+                for _nn,_ns in _sims[:5]:
+                    _nn_cls=DRUG_MECHANISMS.get(_nn,{}).get('class','?')
+                    _lbl,_=similarity_interpretation(_ns)
+                    st.markdown(f"  • **{_nn}** ({_nn_cls}) — Tanimoto `{_ns:.3f}` {_lbl}")
+    else:
+        st.info("Click **Compute Chemical Space (PCA)** to generate the map.")
+
+# ═══ TAB 15: Combination Index ═════════════════════════════════════════════════
+with tab15:
+    st.markdown("### 🎯 Combination Index & Synergy Models")
+    st.markdown("**Chou-Talalay CI** and **Bliss Independence** quantification. Hill equation dose-response from your EC50 inputs. Pre-filled from last prediction.")
+    _ci_c1,_ci_c2,_ci_c3=st.columns(3)
+    with _ci_c1:
+        _ci_score=st.number_input("GNN synergy score",value=float(st.session_state.get('syn_score') or 0.3),
+            min_value=-2.0,max_value=2.0,step=0.01,key="ci_score_inp")
+    with _ci_c2:
+        _ci_ec50_a=st.number_input("Drug A EC50 (µM)",value=1.0,min_value=0.001,max_value=1000.0,step=0.5,key="ci_ec50a")
+    with _ci_c3:
+        _ci_ec50_b=st.number_input("Drug B EC50 (µM)",value=2.0,min_value=0.001,max_value=1000.0,step=0.5,key="ci_ec50b")
+    _ci_hc1,_ci_hc2=st.columns(2)
+    with _ci_hc1: _ci_hill_a=st.slider("Drug A Hill coefficient",0.5,4.0,1.5,0.1,key="ci_hill_a")
+    with _ci_hc2: _ci_hill_b=st.slider("Drug B Hill coefficient",0.5,4.0,1.5,0.1,key="ci_hill_b")
+    _ci_val,_ci_label,_ci_color=combination_index(_ci_score)
+    _bliss15=bliss_analysis(_ci_ec50_a,_ci_ec50_b,_ci_score)
+    _rm1,_rm2,_rm3,_rm4=st.columns(4)
+    _rm1.metric("Synergy Score",f"{_ci_score:.3f}")
+    _rm2.metric("Combination Index",str(_ci_val))
+    _rm3.metric("CI Classification",_ci_label)
+    _rm4.metric("Bliss Deviation",f"{_bliss15['Bliss_deviation']:+.4f}")
+    _bc15="#1e3a1e" if _bliss15['color']=='green' else ("#3a1e1e" if _bliss15['color']=='red' else "#2a2a1e")
+    _bb15="#56d364" if _bliss15['color']=='green' else ("#f85149" if _bliss15['color']=='red' else "#f0883e")
+    st.markdown(
+        f'<div style="background:{_bc15};border-left:4px solid {_bb15};padding:12px;border-radius:6px;color:white;margin:10px 0;">'
+        f'<b>Bliss:</b> {_bliss15["Classification"]} · <b>CI:</b> {_ci_val} — {_ci_label} · '
+        f'E(A)={_bliss15["E_A"]}, E(B)={_bliss15["E_B"]}, expected={_bliss15["E_AB_expected"]}, observed={_bliss15["E_AB_observed"]}'
+        f'</div>',unsafe_allow_html=True)
+    st.markdown("---")
+    _da15=st.session_state.get('name_a','Drug A') or 'Drug A'
+    _db15=st.session_state.get('name_b','Drug B') or 'Drug B'
+    st.markdown("#### 📈 Dose-Response Curves (Hill equation)")
+    _dr_conc_a,_dr_resp_a=dose_response_hill(_ci_ec50_a,_ci_hill_a)
+    _dr_conc_b,_dr_resp_b=dose_response_hill(_ci_ec50_b,_ci_hill_b)
+    _fig_dr=go.Figure()
+    _fig_dr.add_trace(go.Scatter(x=_dr_conc_a,y=_dr_resp_a,mode='lines',name=_da15,line=dict(color='#4fc3f7',width=2.5)))
+    _fig_dr.add_trace(go.Scatter(x=_dr_conc_b,y=_dr_resp_b,mode='lines',name=_db15,line=dict(color='#ff9800',width=2.5)))
+    _fig_dr.add_vline(x=_ci_ec50_a,line_dash="dash",line_color="#4fc3f7",annotation_text=f"EC50={_ci_ec50_a}µM",annotation_font_color="#4fc3f7")
+    _fig_dr.add_vline(x=_ci_ec50_b,line_dash="dash",line_color="#ff9800",annotation_text=f"EC50={_ci_ec50_b}µM",annotation_font_color="#ff9800")
+    _fig_dr.add_hline(y=50,line_dash="dot",line_color="#888",annotation_text="50% effect")
+    _fig_dr.update_layout(xaxis=dict(type='log',title='Concentration (µM)'),yaxis=dict(title='Effect (%)',range=[0,105]),
+        height=390,paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),
+        title=dict(text="Individual Dose-Response: E(C) = C^h / (EC50^h + C^h) × 100",font=dict(color='#4fc3f7')))
+    st.plotly_chart(_fig_dr,use_container_width=True)
+    st.markdown("#### 🎨 Combination Dose-Effect Matrix")
+    st.caption(f"Each cell = predicted combined effect (Bliss + synergy shift). Score {_ci_score:+.3f} {'boosts' if _ci_score>0 else 'suppresses'} the combined effect.")
+    _d_a_doses,_d_b_doses,_combo_mat=synergy_dose_matrix(_ci_ec50_a,_ci_ec50_b,_ci_score)
+    _fig_mat=go.Figure(data=go.Heatmap(z=_combo_mat,x=[f"{d:.2f}" for d in _d_b_doses],y=[f"{d:.2f}" for d in _d_a_doses],
+        colorscale=[[0,'#0d1117'],[0.3,'#0d47a1'],[0.6,'#1565c0'],[0.85,'#e53935'],[1,'#ffeb3b']],
+        zmin=0,zmax=100,hovertemplate=f'{_da15}: %{{y}} µM<br>{_db15}: %{{x}} µM<br>Effect: %{{z:.1f}}%<extra></extra>',
+        colorbar=dict(title="Effect %")))
+    _fig_mat.update_layout(xaxis=dict(title=f"{_db15} Dose (µM)"),yaxis=dict(title=f"{_da15} Dose (µM)"),
+        height=500,paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),
+        title=dict(text=f"Combined Effect Matrix — CI = {_ci_val} ({_ci_label})",font=dict(color='#4fc3f7')))
+    st.plotly_chart(_fig_mat,use_container_width=True)
+    with st.expander("📊 CI Sensitivity — Score → CI Mapping"):
+        _sens_scores=[round(s,2) for s in np.linspace(-1.5,1.5,31)]
+        _sens_ci=[combination_index(s)[0] for s in _sens_scores]
+        _fig_sens=go.Figure()
+        _fig_sens.add_trace(go.Scatter(x=_sens_scores,y=_sens_ci,mode='lines+markers',
+            line=dict(color='#4fc3f7',width=2),
+            marker=dict(color=['#f85149' if c>1.1 else '#56d364' if c<0.9 else '#8b949e' for c in _sens_ci],size=7),
+            hovertemplate='Score: %{x:.2f}<br>CI: %{y:.3f}<extra></extra>'))
+        _fig_sens.add_hline(y=1.0,line_dash="dash",line_color="#888",annotation_text="CI = 1 (additive)")
+        _fig_sens.add_vline(x=_ci_score,line_dash="dot",line_color="#FFD700",
+            annotation_text=f"Current ({_ci_score:.2f})",annotation_font_color="#FFD700")
+        _fig_sens.update_layout(xaxis=dict(title="Synergy Score"),yaxis=dict(title="CI"),
+            height=320,paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),
+            title=dict(text="CI Sensitivity to Synergy Score",font=dict(color='#4fc3f7')))
+        st.plotly_chart(_fig_sens,use_container_width=True)
+    with st.expander("📖 Method Reference"):
+        st.markdown("""
+**Chou-Talalay CI** (Chou 2010, Cancer Res 70:440): CI = exp(−synergy_score) [approximation]. CI < 1 = synergy, CI = 1 = additive, CI > 1 = antagonism.
+
+**Bliss Independence** (Bliss 1939): E(A+B)_expected = E(A) + E(B) − E(A)×E(B). Positive deviation = synergistic.
+
+**Hill equation**: E(C) = C^h / (EC50^h + C^h) × 100%. h = Hill coefficient (steepness).
+        """)
+
+# ═══ TAB 16: Explainability ════════════════════════════════════════════════════
+with tab16:
+    st.markdown("### 🔍 Model Explainability")
+    st.markdown("Which structural features drive the prediction? Atom importance uses RDKit chemistry rules — H-bond donors, aromaticity, charges, ring membership. Everything traceable to SMILES.")
+    _ex_c1,_ex_c2=st.columns(2)
+    with _ex_c1:
+        _ex_smi_a=st.text_area("Drug A SMILES",height=75,key="ex_smi_a",value=st.session_state.get('admet_a_smi',''),placeholder="Paste SMILES or run Predict first")
+    with _ex_c2:
+        _ex_smi_b=st.text_area("Drug B SMILES",height=75,key="ex_smi_b",value=st.session_state.get('admet_b_smi',''),placeholder="Paste SMILES or run Predict first")
+    if st.button("🔍 Analyze Structural Features",key="ex_btn",type="primary"):
+        if not _ex_smi_a or not _ex_smi_b: st.error("Enter SMILES for both drugs."); st.stop()
+        st.session_state['ex_smi_a']=_ex_smi_a; st.session_state['ex_smi_b']=_ex_smi_b
+    _ex_smi_a=st.session_state.get('ex_smi_a',_ex_smi_a)
+    _ex_smi_b=st.session_state.get('ex_smi_b',_ex_smi_b)
+    _ex_name_a=st.session_state.get('name_a','Drug A') or 'Drug A'
+    _ex_name_b=st.session_state.get('name_b','Drug B') or 'Drug B'
+    if _ex_smi_a and _ex_smi_b:
+        _feat_a=drug_feature_importance_bar(_ex_smi_a,_ex_name_a)
+        _feat_b=drug_feature_importance_bar(_ex_smi_b,_ex_name_b)
+        if _feat_a and _feat_b:
+            st.markdown("#### 📊 Feature Class Importance")
+            _fi_c1,_fi_c2=st.columns(2)
+            for _fc,_feat,_nm,_col in [(_fi_c1,_feat_a,_ex_name_a,'#4fc3f7'),(_fi_c2,_feat_b,_ex_name_b,'#ff9800')]:
+                with _fc:
+                    _fkeys=list(_feat.keys()); _fvals=[_feat[k] for k in _fkeys]
+                    _fig_fi=go.Figure(go.Bar(x=_fvals,y=_fkeys,orientation='h',marker_color=_col,
+                        text=[f"{v:.0%}" for v in _fvals],textposition='outside'))
+                    _fig_fi.update_layout(height=340,title=dict(text=_nm,font=dict(color='#4fc3f7')),
+                        xaxis=dict(range=[0,1.2],title="Normalized importance",showgrid=False),
+                        yaxis=dict(autorange='reversed'),paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='white'),margin=dict(l=180,r=80))
+                    st.plotly_chart(_fig_fi,use_container_width=True)
+            st.markdown("#### 🔀 Feature Overlap & Synergy Signal")
+            _all_feat_keys=list(_feat_a.keys())
+            _overlap_vals={k:min(_feat_a.get(k,0),_feat_b.get(k,0)) for k in _all_feat_keys}
+            _total_overlap=sum(_overlap_vals.values())
+            _ol_color="#3a1e1e" if _total_overlap>0.5 else "#1e3a1e"
+            _ol_border="#f85149" if _total_overlap>0.5 else "#56d364"
+            _ol_msg=("High structural overlap — drugs likely share binding pharmacophores, increasing competition risk."
+                     if _total_overlap>0.5 else "Low structural overlap — complementary features, favorable for synergy.")
+            st.markdown(f'<div style="background:{_ol_color};border-left:4px solid {_ol_border};padding:12px;border-radius:6px;color:white;">'
+                        f'<b>Feature Overlap Score: {_total_overlap:.3f}</b> — {_ol_msg}</div>',unsafe_allow_html=True)
+            _fig_ov=go.Figure()
+            _fig_ov.add_trace(go.Bar(name=_ex_name_a,x=_all_feat_keys,y=[_feat_a.get(k,0) for k in _all_feat_keys],marker_color='#4fc3f7'))
+            _fig_ov.add_trace(go.Bar(name=_ex_name_b,x=_all_feat_keys,y=[_feat_b.get(k,0) for k in _all_feat_keys],marker_color='#ff9800'))
+            _fig_ov.add_trace(go.Bar(name='Shared (overlap)',x=_all_feat_keys,y=[_overlap_vals.get(k,0) for k in _all_feat_keys],
+                marker_color='rgba(255,235,59,0.6)',marker_line=dict(color='#FFD700',width=1.5)))
+            _fig_ov.update_layout(barmode='group',height=380,xaxis=dict(tickangle=-30),
+                paper_bgcolor='rgba(0,0,0,0)',plot_bgcolor='rgba(0,0,0,0)',font=dict(color='white'),
+                title=dict(text="Structural Feature Overlap",font=dict(color='#4fc3f7')))
+            st.plotly_chart(_fig_ov,use_container_width=True)
+            from admet_utils import atom_feature_importance as _afi
+            _at_c1,_at_c2=st.columns(2)
+            with _at_c1:
+                with st.expander(f"🔬 Top Atoms — {_ex_name_a}"):
+                    _atoms_a=_afi(_ex_smi_a)
+                    if _atoms_a: st.dataframe(pd.DataFrame(_atoms_a[:12]),use_container_width=True,hide_index=True)
+            with _at_c2:
+                with st.expander(f"🔬 Top Atoms — {_ex_name_b}"):
+                    _atoms_b=_afi(_ex_smi_b)
+                    if _atoms_b: st.dataframe(pd.DataFrame(_atoms_b[:12]),use_container_width=True,hide_index=True)
+            st.markdown("#### 🧠 Mechanism-Informed Rationale")
+            _mech_a16=DRUG_MECHANISMS.get(_ex_name_a,{})
+            _mech_b16=DRUG_MECHANISMS.get(_ex_name_b,{})
+            if _mech_a16 and _mech_b16:
+                _pp=(_mech_a16.get('pathway','?'),_mech_b16.get('pathway','?'))
+                _expl16=SYNERGY_RULES.get(_pp,SYNERGY_RULES.get((_pp[1],_pp[0]),
+                    f"🔬 No specific pathway rule for {_pp[0]} × {_pp[1]}. "
+                    f"Structural overlap ({_total_overlap:.3f}) {'suggests competition' if _total_overlap>0.5 else 'suggests complementarity'}. "
+                    f"Tanimoto: {st.session_state.get('tanimoto','N/A')}."))
+                _bg16="#1e3a1e" if "✅" in _expl16 else "#3a1e1e" if "⚠️" in _expl16 else "#1a2a3a"
+                _brd16="#56d364" if "✅" in _expl16 else "#f85149" if "⚠️" in _expl16 else "#4fc3f7"
+                st.markdown(f'<div style="background:{_bg16};border-left:4px solid {_brd16};padding:14px;border-radius:6px;color:white;font-size:14px;">{_expl16}</div>',unsafe_allow_html=True)
+            else:
+                st.info("Drug not in mechanism database. Use structural overlap above as the primary signal.")
+    else:
+        st.info("Enter SMILES above and click **Analyze Structural Features**, or run **🔬 Predict Synergy** first.")
+
+# ═══ TAB 17: Report Generator ══════════════════════════════════════════════════
+with tab17:
+    st.markdown("### 📝 Prediction Report Generator")
+    st.markdown("Generate a **comprehensive standalone HTML report** — dark-themed, print-ready, opens in any browser. Includes all results, ADMET, Bliss, CI, and methodology notes.")
+    _rp_has_pred=st.session_state.get('syn_score') is not None
+    if not _rp_has_pred:
+        st.info("👆 Run a prediction in **🔬 Predict Synergy** first to enable report generation.")
+    else:
+        _rp_score=float(st.session_state.get('syn_score',0.0))
+        _rp_std=float(st.session_state.get('syn_std',0.0))
+        _rp_prob=float(st.session_state.get('syn_prob',0.0))
+        _rp_dsa=float(st.session_state.get('dsa',-7.0))
+        _rp_dsb=float(st.session_state.get('dsb',-7.0))
+        _rp_da=st.session_state.get('name_a','Drug A') or 'Drug A'
+        _rp_db=st.session_state.get('name_b','Drug B') or 'Drug B'
+        _rp_verdict=st.session_state.get('verdict','?')
+        _rp_m1,_rp_m2,_rp_m3,_rp_m4=st.columns(4)
+        _rp_m1.metric("Drug A",_rp_da)
+        _rp_m2.metric("Drug B",_rp_db)
+        _rp_m3.metric("Synergy Score",f"{_rp_score:.3f} ± {_rp_std:.3f}")
+        _rp_m4.metric("Verdict",_rp_verdict.split()[0] if _rp_verdict else '?')
+        if st.button("📄 Generate & Download Report",key="gen_report_btn",type="primary"):
+            from datetime import datetime as _dt
+            _rp_ci_val,_rp_ci_lbl,_=combination_index(_rp_score)
+            _rp_bliss=bliss_analysis(_rp_dsa,_rp_dsb,_rp_score)
+            _report_data={
+                "drug_a":_rp_da,"drug_b":_rp_db,
+                "pdb_id":st.session_state.get('pdb_id','?'),
+                "cell_line":st.session_state.get('cell_line','?'),
+                "panel":st.session_state.get('panel','?'),
+                "synergy_score":_rp_score,"synergy_std":_rp_std,"synergy_prob":_rp_prob,
+                "dock_a":_rp_dsa,"dock_b":_rp_dsb,"verdict":_rp_verdict,
+                "model_version":model_version,"model_r":model_r,"model_auroc":model_auroc,
+                "mc_samples":20,"protein_name":st.session_state.get('pname',''),
+                "admet_a":st.session_state.get('admet_a') or {},
+                "admet_b":st.session_state.get('admet_b') or {},
+                "tanimoto":st.session_state.get('tanimoto'),
+                "ci":_rp_ci_val,"ci_label":_rp_ci_lbl,"bliss":_rp_bliss,
+                "timestamp":_dt.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
+            }
+            _html=generate_html_report(_report_data)
+            _fname=f"ProteinSynergyDock_{_rp_da}_{_rp_db}_{_report_data['timestamp'][:10]}.html".replace(' ','_')
+            st.download_button(label="⬇️ Download HTML Report",data=_html.encode('utf-8'),
+                file_name=_fname,mime="text/html",key="dl_report_btn",type="primary")
+            st.success(f"✅ Report ready: **{_fname}**")
+        st.markdown("---")
+        st.markdown("#### 📊 Session Prediction History")
+        if st.session_state.get('history'):
+            _hist_df=pd.DataFrame(st.session_state['history'])
+            st.dataframe(_hist_df,use_container_width=True,hide_index=True)
+            st.download_button("⬇️ Download History (CSV)",data=_hist_df.to_csv(index=False),
+                file_name="synergy_session_history.csv",mime="text/csv",key="dl_hist_btn")
+        else:
+            st.info("No predictions in this session yet.")
+        st.markdown("---")
+        st.markdown("#### 📦 Export Raw Prediction Data (JSON)")
+        if st.button("🗂️ Export JSON",key="export_json_btn"):
+            _json_data={
+                "drug_a":st.session_state.get('name_a',''),"drug_b":st.session_state.get('name_b',''),
+                "pdb_id":st.session_state.get('pdb_id',''),"cell_line":st.session_state.get('cell_line',''),
+                "panel":st.session_state.get('panel',''),"synergy_score":st.session_state.get('syn_score'),
+                "synergy_std":st.session_state.get('syn_std'),"synergy_prob":st.session_state.get('syn_prob'),
+                "dock_a_kcal":st.session_state.get('dsa'),"dock_b_kcal":st.session_state.get('dsb'),
+                "verdict":st.session_state.get('verdict'),"tanimoto":st.session_state.get('tanimoto'),
+                "admet_a":st.session_state.get('admet_a'),"admet_b":st.session_state.get('admet_b'),
+                "mc_samples":st.session_state.get('syn_samples',[]),
+            }
+            st.download_button("⬇️ Download JSON",data=json.dumps(_json_data,indent=2,default=str),
+                file_name="synergy_prediction.json",mime="application/json",key="dl_json_btn")
