@@ -199,15 +199,32 @@ function DockingTab({ result, drugAName, drugBName, uniprotId, smilesA, smilesB 
     { pose: 5, score: docking + 1.8, rmsd: 4.7, mode: 'Peripheral contact' },
   ];
 
+  // Fetch 3D SDF from PubChem public API — no backend required
+  const fetchSDF = async (name: string, smiles: string): Promise<string | null> => {
+    // Try by name first (cleaner structures), fallback to SMILES
+    const byName = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/name/${encodeURIComponent(name)}/SDF?record_type=3d`;
+    const bySmiles = `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(smiles)}/SDF?record_type=3d`;
+    for (const url of [byName, bySmiles]) {
+      try {
+        const r = await fetch(url);
+        if (r.ok) {
+          const sdf = await r.text();
+          if (sdf && sdf.includes('$$$$')) return sdf;
+        }
+      } catch {}
+    }
+    return null;
+  };
+
   const loadStructures = async () => {
     setLoadingStruct(true);
     try {
-      const [rA, rB] = await Promise.all([
-        fetch(`${API_URL}/structure?smiles=${encodeURIComponent(smilesA)}&name=${encodeURIComponent(drugAName)}`),
-        fetch(`${API_URL}/structure?smiles=${encodeURIComponent(smilesB)}&name=${encodeURIComponent(drugBName)}`),
+      const [sdfA, sdfB] = await Promise.all([
+        fetchSDF(drugAName, smilesA),
+        fetchSDF(drugBName, smilesB),
       ]);
-      if (rA.ok) setStructA(await rA.json());
-      if (rB.ok) setStructB(await rB.json());
+      if (sdfA) setStructA({ sdf: sdfA, poses: [sdfA], num_atoms: (sdfA.match(/\n/g) || []).length });
+      if (sdfB) setStructB({ sdf: sdfB, poses: [sdfB], num_atoms: (sdfB.match(/\n/g) || []).length });
     } catch {}
     setLoadingStruct(false);
   };
@@ -277,8 +294,8 @@ function DockingTab({ result, drugAName, drugBName, uniprotId, smilesA, smilesB 
         {!structA && !loadingStruct && (
           <div className="h-48 rounded-xl bg-black/30 border border-white/10 flex flex-col items-center justify-center gap-3">
             <div className="text-4xl">🧬</div>
-            <div className="text-sm text-slate-400">Click "Load 3D Structures" to generate RDKit 3D conformers</div>
-            <div className="text-xs text-slate-500 font-mono">Uses /structure endpoint · RDKit ETKDGv3 · MMFF optimization</div>
+            <div className="text-sm text-slate-400">Click "Load 3D Structures" to fetch 3D conformers from PubChem</div>
+            <div className="text-xs text-slate-500 font-mono">PubChem Public API · No backend required · Real 3D structures</div>
           </div>
         )}
 
