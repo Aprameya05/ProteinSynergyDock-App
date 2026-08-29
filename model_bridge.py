@@ -27,12 +27,12 @@ from __future__ import annotations
 import os
 from typing import Optional, Tuple
 
-import torch
-import torch.nn as nn
 from rdkit import Chem
 from rdkit.Chem import AllChem
-from torch_geometric.nn import GATv2Conv, global_mean_pool
-from torch_geometric.data import Data, Batch
+
+# torch / torch_geometric are imported lazily inside functions so the API
+# process starts up fast on Railway's 512 MB free tier. The heavy ~2 GB
+# libraries are only pulled into memory on the first actual predict call.
 
 
 CHECKPOINT_PATH = os.environ.get("PSD_CHECKPOINT_PATH", "proteinsydock_v2_final.pt")
@@ -90,6 +90,8 @@ DRUG_SMILES_LOOKUP = {
 
 
 def smiles_to_graph(smiles):
+    import torch
+    from torch_geometric.data import Data
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return None
@@ -139,6 +141,7 @@ def _enable_mc_dropout(model):
 
 def predict_with_uncertainty(model, model_version, cell_to_idx, ga, gb, go_emb, dock,
                               cell_line, batch_cls, n_samples=20):
+    import torch
     model.eval()
     _enable_mc_dropout(model)
 
@@ -209,6 +212,7 @@ def _load_model_state():
             f"(same directory, or set PSD_CHECKPOINT_PATH env var)."
         )
 
+    import torch
     ckpt = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=False)
     sd = ckpt["state_dict"]
 
@@ -281,6 +285,7 @@ def predict_synergy(
             f"(invalid SMILES or RDKit embedding failure)."
         )
 
+    import torch
     # go_emb: zero placeholder, mirrors app.py's existing prediction tab
     # exactly (not a new simplification introduced by this API layer).
     go_emb = torch.zeros(512).unsqueeze(0)
