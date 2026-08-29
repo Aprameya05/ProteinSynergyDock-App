@@ -17,17 +17,99 @@ from ligplot_utils import (
  
 st.set_page_config(page_title="ProteinSynergyDock", page_icon="🧬", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""<style>
-.main-header{text-align:center;padding:2rem;background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);border-radius:12px;margin-bottom:2rem;}
-.main-header h1{color:#4fc3f7;font-size:2.5rem;margin:0;}
-.main-header p{color:#b0bec5;margin:0.5rem 0 0;}
-.known-score{background:#1e3a1e;border-left:4px solid #4caf50;padding:12px;border-radius:6px;margin:8px 0;color:white;}
-.unknown-score{background:#2a2a1e;border-left:4px solid #ff9800;padding:12px;border-radius:6px;margin:8px 0;color:white;}
-.history-item{background:#1a1a2e;border-left:3px solid #4fc3f7;padding:8px;border-radius:4px;margin:4px 0;color:white;font-size:12px;}
-/* Make the tab bar wrap onto multiple rows instead of requiring horizontal scroll */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+html,body,[class*="css"]{font-family:'Inter',sans-serif;}
+
+/* ── Hero banner ── */
+.main-header{
+  text-align:center;padding:2.5rem 2rem;
+  background:linear-gradient(135deg,#0d0d1a 0%,#0f1c3a 45%,#0a2a5e 100%);
+  border-radius:16px;margin-bottom:1.5rem;
+  border:1px solid rgba(79,195,247,0.15);
+  box-shadow:0 8px 32px rgba(0,0,0,0.5);
+  position:relative;overflow:hidden;
+}
+.main-header::before{
+  content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;
+  background:radial-gradient(ellipse at center,rgba(79,195,247,0.04) 0%,transparent 60%);
+  animation:pulse-bg 6s ease-in-out infinite;
+}
+@keyframes pulse-bg{0%,100%{opacity:0.5;}50%{opacity:1;}}
+.main-header h1{color:#4fc3f7;font-size:2.8rem;margin:0;font-weight:700;letter-spacing:-0.5px;}
+.main-header .subtitle{color:#90caf9;margin:0.4rem 0 0;font-size:1.05rem;font-weight:300;}
+.main-header .tagline{color:#546e7a;margin-top:10px;font-size:12px;letter-spacing:1px;text-transform:uppercase;}
+
+/* ── Stat badges in header ── */
+.badge-row{display:flex;justify-content:center;gap:12px;margin-top:16px;flex-wrap:wrap;}
+.badge{background:rgba(79,195,247,0.1);border:1px solid rgba(79,195,247,0.25);
+  color:#81d4fa;padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;}
+
+/* ── Glass cards ── */
+.glass-card{
+  background:rgba(22,33,62,0.7);backdrop-filter:blur(12px);
+  border:1px solid rgba(79,195,247,0.12);border-radius:12px;
+  padding:16px 20px;margin:8px 0;color:white;
+  box-shadow:0 4px 16px rgba(0,0,0,0.3);
+  transition:border-color 0.2s;
+}
+.glass-card:hover{border-color:rgba(79,195,247,0.3);}
+
+/* ── Insight card ── */
+.insight-synergy{background:linear-gradient(135deg,#0d2818,#0f3a20);border-left:4px solid #4caf50;padding:16px 20px;border-radius:8px;margin:10px 0;color:white;}
+.insight-antagonism{background:linear-gradient(135deg,#2d0a0a,#3a1010);border-left:4px solid #ef5350;padding:16px 20px;border-radius:8px;margin:10px 0;color:white;}
+.insight-additive{background:linear-gradient(135deg,#1a1500,#2a2200);border-left:4px solid #ffa726;padding:16px 20px;border-radius:8px;margin:10px 0;color:white;}
+.insight-card h3{margin:0 0 8px;font-size:1.1rem;font-weight:600;}
+.insight-card p{margin:0;font-size:0.9rem;line-height:1.6;color:#cfd8dc;}
+
+/* ── Known-score / unknown-score ── */
+.known-score{background:#0d2818;border-left:4px solid #4caf50;padding:12px 16px;border-radius:8px;margin:8px 0;color:white;}
+.unknown-score{background:#1a1500;border-left:4px solid #ffa726;padding:12px 16px;border-radius:8px;margin:8px 0;color:white;}
+
+/* ── Sidebar history items ── */
+.history-item{
+  background:rgba(26,26,46,0.9);border-left:3px solid #4fc3f7;
+  padding:10px 12px;border-radius:6px;margin:6px 0;color:white;font-size:12px;
+  transition:border-color 0.2s;
+}
+.history-item:hover{border-color:#81d4fa;}
+
+/* ── Sidebar model badge ── */
+.model-badge{
+  display:inline-block;background:linear-gradient(90deg,#1565c0,#0d47a1);
+  color:#e3f2fd;padding:3px 10px;border-radius:12px;font-size:11px;
+  font-weight:600;letter-spacing:0.5px;margin-left:6px;
+}
+.sidebar-stat{display:flex;justify-content:space-between;align-items:center;
+  padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);}
+.sidebar-stat .val{color:#4fc3f7;font-weight:600;}
+
+/* ── Metric tiles ── */
+.metric-tile{
+  background:rgba(13,19,40,0.9);border:1px solid rgba(79,195,247,0.15);
+  border-radius:10px;padding:14px 16px;text-align:center;
+}
+.metric-tile .num{font-size:1.6rem;font-weight:700;color:#4fc3f7;}
+.metric-tile .lbl{font-size:11px;color:#78909c;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
+.metric-tile .sub{font-size:11px;color:#546e7a;margin-top:2px;}
+
+/* ── Pipeline status ── */
+.pipe-step{padding:6px 10px;border-radius:6px;margin:3px 0;font-size:13px;}
+.pipe-step.done{background:#0d2818;color:#a5d6a7;}
+.pipe-step.running{background:#1a1a00;color:#ffe082;}
+.pipe-step.warn{background:#1a0d00;color:#ffb74d;}
+
+/* ── Tabs ── */
 .stTabs [data-baseweb="tab-list"]{flex-wrap:wrap;gap:4px;row-gap:6px;}
-.stTabs [data-baseweb="tab"]{height:auto;white-space:normal;padding:8px 14px;font-size:14px;}
+.stTabs [data-baseweb="tab"]{height:auto;white-space:normal;padding:8px 14px;font-size:13px;font-weight:500;}
 .stTabs [data-baseweb="tab-highlight"]{display:none;}
 .stTabs [data-baseweb="tab-border"]{display:none;}
+
+/* ── Demo mode button ── */
+.demo-banner{
+  background:linear-gradient(90deg,rgba(21,101,192,0.3),rgba(13,71,161,0.3));
+  border:1px solid rgba(79,195,247,0.3);border-radius:10px;
+  padding:12px 18px;text-align:center;margin-bottom:12px;
+}
 </style>""", unsafe_allow_html=True)
 
 from core import DrugEncoder, CrossDrugAttention, ProteinSynergyDockV2, ProteinSynergyDockV1
@@ -106,36 +188,61 @@ def show_drugs(sa,sb,h=400):
 
 
 # ── Header ─────────────────────────────────────────────────────────────────────
-st.markdown("""<div class="main-header">
+n_predictions_total = len(st.session_state.history)
+st.markdown(f"""<div class="main-header">
 <h1>🧬 ProteinSynergyDock</h1>
-<p>Structure-aware drug combination synergy prediction with cell line context</p>
-<p style="font-size:13px;color:#78909c;margin-top:8px;">Real AutoDock Vina docking · ProteinWhisper++ GO context · 60 cancer cell lines</p>
+<p class="subtitle">Structure-aware drug combination synergy prediction with cancer cell line context</p>
+<p class="tagline">GATv2 Graph Neural Network &nbsp;·&nbsp; AutoDock Vina Docking &nbsp;·&nbsp; Monte Carlo Uncertainty &nbsp;·&nbsp; FHIR R4 Interoperability</p>
+<div class="badge-row">
+  <span class="badge">📊 107,103 NCI ALMANAC pairs</span>
+  <span class="badge">🧫 60 cancer cell lines</span>
+  <span class="badge">🎯 Pearson r = {model_r:.4f}</span>
+  <span class="badge">📈 AUROC = {model_auroc:.4f}</span>
+  <span class="badge">🔬 {n_predictions_total} predictions this session</span>
+</div>
 </div>""", unsafe_allow_html=True)
 
 # ── Sidebar ────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.markdown("## 🔬 Quick Examples")
+    # Demo mode quick-launch
+    st.markdown("""<div class="demo-banner">
+    <b style="color:#4fc3f7;">🎯 Symposium Demo Mode</b><br>
+    <span style="color:#90caf9;font-size:12px;">Auto-load a curated showcase pair</span>
+    </div>""", unsafe_allow_html=True)
+
+    st.markdown("### 🔬 Quick Examples")
     example=st.selectbox("Choose a drug pair:",list(SHOWCASES.keys()))
     ex=SHOWCASES[example]
     if ex["note"]: st.info(ex["note"])
     st.markdown("---")
-    st.markdown(f"""## 📊 Model Info
-- **Version:** {model_version.upper() if model_version!='none' else 'Not loaded'}
-- **Pearson r:** {model_r:.4f}
-- **AUROC:** {model_auroc:.4f}
-- **Real docking:** AutoDock Vina
-- **Training data:** 107,103 NCI ALMANAC scores
-- **Cell lines:** 60 cancer types
 
-## 🔗 Links
-- [GitHub](https://github.com/Aprameya05/ProteinSynergyDock)
-- [ProteinWhisper](https://github.com/Aprameya05/ProteinWhisper)
-- [DrugSynergy3D](https://github.com/Aprameya05/DrugSynergy3D)""")
+    # Model info as stat table
+    mv_label = model_version.upper() if model_version != 'none' else 'Not loaded'
+    st.markdown(f"""### 🤖 Model
+<div style="background:rgba(13,19,40,0.8);border:1px solid rgba(79,195,247,0.15);border-radius:10px;padding:12px 14px;margin:6px 0;">
+<div class="sidebar-stat"><span>Version</span><span class="val">{mv_label} <span class="model-badge">GATv2</span></span></div>
+<div class="sidebar-stat"><span>Pearson r</span><span class="val">{model_r:.4f}</span></div>
+<div class="sidebar-stat"><span>AUROC</span><span class="val">{model_auroc:.4f}</span></div>
+<div class="sidebar-stat"><span>Training pairs</span><span class="val">107,103</span></div>
+<div class="sidebar-stat"><span>Cell lines</span><span class="val">60 (NCI-60)</span></div>
+<div class="sidebar-stat" style="border:none;"><span>Docking engine</span><span class="val">Vina 1.2.7</span></div>
+</div>""", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("### 🔗 Links")
+    st.markdown("- [GitHub](https://github.com/Aprameya05/ProteinSynergyDock-App)\n- [FHIR API](https://proteinsynergydock-fhir-api.onrender.com/docs)\n- [ProteinWhisper](https://github.com/Aprameya05/ProteinWhisper)\n- [DrugSynergy3D](https://github.com/Aprameya05/DrugSynergy3D)")
+
     if st.session_state.history:
-        st.markdown("---\n## 📜 Recent Predictions")
-        for h in st.session_state.history:
-            st.markdown(f"""<div class="history-item"><b>{h['drug_a']} + {h['drug_b']}</b><br>
-{h['cell_line']} | Score: {h['score']:.3f} | {h['verdict'].split()[0]}</div>""", unsafe_allow_html=True)
+        st.markdown("---\n### 📜 Session History")
+        for _h in st.session_state.history:
+            _score = _h['score']
+            _color = "#4caf50" if _score > 0.3 else ("#ef5350" if _score < -0.1 else "#ffa726")
+            _verdict_icon = "✅" if _score > 0.3 else ("❌" if _score < -0.1 else "⚠️")
+            st.markdown(f"""<div class="history-item">
+<b>{_verdict_icon} {_h['drug_a']} + {_h['drug_b']}</b><br>
+<span style="color:#78909c;">{_h['cell_line']}</span>
+<span style="float:right;color:{_color};font-weight:600;">{_score:+.3f}</span>
+</div>""", unsafe_allow_html=True)
 
 # ── Tabs ───────────────────────────────────────────────────────────────────────
 tab1,tab2,tab3,tab4,tab5,tab6,tab7,tab8,tab9,tab10,tab11,tab12,tab13,tab14,tab15,tab16,tab17 = st.tabs([
@@ -284,13 +391,94 @@ with tab1:
             verdict,color=get_verdict(syn)
             conf_label,conf_color=confidence_label(syn_std)
             st.session_state['verdict']=verdict
-            m1,m2,m3,m4=st.columns(4)
-            m1.metric("Synergy Score",f"{syn:.3f} ± {syn_std:.3f}")
-            m2.metric("Synergy Probability",f"{prob:.3f} ± {prob_std:.3f}")
-            m3.metric(f"{name_a or 'Drug A'} Binding",f"{dsa:.2f} kcal/mol")
-            m4.metric(f"{name_b or 'Drug B'} Binding",f"{dsb:.2f} kcal/mol")
-            st.markdown(f"### Verdict: :{color}[{verdict}]")
-            st.markdown(f"**Confidence:** :{conf_color}[{conf_label}]  *(std over {mc_samples} stochastic MC Dropout samples)*")
+
+            # ── Synergy gauge ───────────────────────────────────────────────
+            _gauge_color = "#4caf50" if syn > 0.3 else ("#ef5350" if syn < -0.1 else "#ffa726")
+            _gauge_fig = go.Figure(go.Indicator(
+                mode="gauge+number+delta",
+                value=round(syn, 3),
+                delta={"reference": 0, "valueformat": ".3f",
+                       "increasing": {"color": "#4caf50"}, "decreasing": {"color": "#ef5350"}},
+                gauge={
+                    "axis": {"range": [-3, 3], "tickwidth": 1, "tickcolor": "#546e7a",
+                             "tickvals": [-3, -2, -1, 0, 1, 2, 3],
+                             "ticktext": ["-3", "-2", "-1", "0", "+1", "+2", "+3"]},
+                    "bar": {"color": _gauge_color, "thickness": 0.3},
+                    "bgcolor": "rgba(0,0,0,0)",
+                    "borderwidth": 0,
+                    "steps": [
+                        {"range": [-3, -0.1], "color": "rgba(239,83,80,0.15)"},
+                        {"range": [-0.1, 0.3], "color": "rgba(255,167,38,0.10)"},
+                        {"range": [0.3, 3], "color": "rgba(76,175,80,0.15)"},
+                    ],
+                    "threshold": {"line": {"color": "#FFD700", "width": 3}, "thickness": 0.75, "value": syn},
+                },
+                number={"font": {"size": 42, "color": _gauge_color}, "suffix": f" ± {syn_std:.2f}"},
+                title={"text": f"Synergy Score<br><span style='font-size:13px;color:#78909c;'>{name_a or 'Drug A'} + {name_b or 'Drug B'} | {cell_line}</span>",
+                       "font": {"size": 16, "color": "#b0bec5"}},
+            ))
+            _gauge_fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                height=260, margin=dict(t=60, b=10, l=20, r=20),
+                font={"color": "#b0bec5"},
+            )
+            _gc1, _gc2 = st.columns([1.4, 1])
+            with _gc1:
+                st.plotly_chart(_gauge_fig, use_container_width=True)
+            with _gc2:
+                st.markdown(f"""<div style="padding:10px 0;">
+<div class="metric-tile" style="margin-bottom:8px;">
+  <div class="num">{prob:.3f} <span style="font-size:14px;color:#546e7a;">± {prob_std:.3f}</span></div>
+  <div class="lbl">Synergy Probability</div>
+</div>
+<div class="metric-tile" style="margin-bottom:8px;">
+  <div class="num" style="font-size:1.1rem;">{dsa:.2f} kcal/mol</div>
+  <div class="lbl">{name_a or 'Drug A'} Binding</div>
+  <div class="sub">AutoDock Vina</div>
+</div>
+<div class="metric-tile">
+  <div class="num" style="font-size:1.1rem;">{dsb:.2f} kcal/mol</div>
+  <div class="lbl">{name_b or 'Drug B'} Binding</div>
+  <div class="sub">AutoDock Vina</div>
+</div>
+</div>""", unsafe_allow_html=True)
+
+            # ── Verdict + Key Insight card ──────────────────────────────────
+            _ins_class = "insight-synergy" if syn > 0.3 else ("insight-antagonism" if syn < -0.1 else "insight-additive")
+            _ins_icon  = "🟢" if syn > 0.3 else ("🔴" if syn < -0.1 else "🟡")
+            _ins_title = verdict
+            if syn > 0.5:
+                _ins_body = (f"The model predicts strong synergy between {name_a or 'Drug A'} and {name_b or 'Drug B'} "
+                             f"in {cell_line} ({panel}). A synergy score above 0.5 places this combination in the top "
+                             f"tier of predicted synergistic pairs across the NCI ALMANAC dataset. "
+                             f"The {conf_label.lower()} confidence (std = {syn_std:.3f}) suggests the prediction is "
+                             f"stable across uncertainty sampling. Check the Mechanism Explorer tab for the biological rationale.")
+            elif syn > 0.1:
+                _ins_body = (f"The model predicts mild synergy for {name_a or 'Drug A'} + {name_b or 'Drug B'} "
+                             f"in {cell_line}. The combination is likely better than either drug alone, but the effect "
+                             f"is not as strong as a vertical pathway blockade pair (e.g. BRAF+MEK). "
+                             f"Consider checking synergy across other cell lines in the Cell Line Comparison tab.")
+            elif syn > -0.1:
+                _ins_body = (f"{name_a or 'Drug A'} and {name_b or 'Drug B'} are predicted to behave approximately "
+                             f"additively in {cell_line}. The combined effect is close to what you would expect from "
+                             f"Bliss independence — neither strongly synergistic nor antagonistic. "
+                             f"Structural similarity between the drugs (Tanimoto) may be a factor.")
+            else:
+                _ins_body = (f"The model predicts antagonism between {name_a or 'Drug A'} and {name_b or 'Drug B'} "
+                             f"in {cell_line}. A negative synergy score indicates that combining these drugs produces "
+                             f"less effect than expected from either drug alone. This often happens when both drugs "
+                             f"compete for the same binding site — check Tanimoto similarity and the Mechanism Explorer tab.")
+
+            st.markdown(f"""<div class="{_ins_class} insight-card">
+<h3>{_ins_icon} {_ins_title}</h3>
+<p>{_ins_body}</p>
+<p style="margin-top:10px;font-size:11px;color:#546e7a;">
+Confidence: {conf_label} &nbsp;|&nbsp; MC Dropout samples: {mc_samples} &nbsp;|&nbsp;
+Model: ProteinSynergyDockV{model_version.replace('v','').upper()} &nbsp;|&nbsp;
+Cancer: {panel} / {cell_line}
+</p>
+</div>""", unsafe_allow_html=True)
+
             st.caption(f"Cancer context: **{panel}** → **{cell_line}**")
 
             with st.expander("📈 Uncertainty distribution (MC Dropout samples)"):
@@ -333,25 +521,46 @@ randomly dropped; a wide spread means the model itself is uncertain about this s
             st.session_state['admet_a_smi'] = smiles_a
             st.session_state['admet_b_smi'] = smiles_b
             if _admet_a and _admet_b:
-                with st.expander("🧪 Quick ADMET Snapshot (computed from SMILES)"):
-                    _ac1, _ac2 = st.columns(2)
+                with st.expander("🧪 Quick ADMET Snapshot (all computed from SMILES via RDKit — no database lookups)", expanded=True):
+                    # Mini radar chart comparing both drugs
+                    _radar_cats = ["QED", "Drug-likeness", "Absorption", "BBB Score", "Fsp3"]
+                    def _norm(v, lo, hi): return max(0.0, min(1.0, (float(v) - lo) / (hi - lo)))
+                    _ra = [_admet_a['QED'], _admet_a['Drug-likeness'], _admet_a['Absorption'],
+                           _norm(_admet_a['BBB Score'], 0, 4), _admet_a['Fsp3']]
+                    _rb = [_admet_b['QED'], _admet_b['Drug-likeness'], _admet_b['Absorption'],
+                           _norm(_admet_b['BBB Score'], 0, 4), _admet_b['Fsp3']]
+                    _radar_fig = go.Figure()
+                    _radar_fig.add_trace(go.Scatterpolar(r=_ra + [_ra[0]], theta=_radar_cats + [_radar_cats[0]],
+                        fill='toself', name=name_a or 'Drug A',
+                        line=dict(color='#4fc3f7', width=2), fillcolor='rgba(79,195,247,0.15)'))
+                    _radar_fig.add_trace(go.Scatterpolar(r=_rb + [_rb[0]], theta=_radar_cats + [_radar_cats[0]],
+                        fill='toself', name=name_b or 'Drug B',
+                        line=dict(color='#ff8a65', width=2), fillcolor='rgba(255,138,101,0.15)'))
+                    _radar_fig.update_layout(
+                        polar=dict(bgcolor='rgba(0,0,0,0)',
+                            radialaxis=dict(visible=True, range=[0, 1], gridcolor='#263238', tickfont=dict(size=9)),
+                            angularaxis=dict(gridcolor='#263238', tickfont=dict(size=11, color='#90caf9'))),
+                        showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+                        height=280, margin=dict(t=20, b=20, l=40, r=40),
+                        legend=dict(font=dict(color='#b0bec5'), bgcolor='rgba(0,0,0,0)'),
+                        font=dict(color='#b0bec5'))
+                    _ac1, _ac2, _ac3 = st.columns([1.2, 1, 1])
                     with _ac1:
-                        st.markdown(f"**{name_a or 'Drug A'}**")
-                        st.metric("MW", f"{_admet_a['MW']} Da")
-                        st.metric("LogP", _admet_a['LogP'])
-                        st.metric("QED", _admet_a['QED'])
-                        st.metric("Solubility", _admet_a['Solubility'])
-                        st.metric("BBB Penetrant", "✅" if _admet_a['BBB Penetrant'] else "❌")
-                        st.metric("Lipinski", "✅ Pass" if _admet_a['Lipinski Pass'] else "❌ Fail")
+                        st.plotly_chart(_radar_fig, use_container_width=True)
                     with _ac2:
+                        _props_show = ["MW", "LogP", "QED", "TPSA", "Solubility", "BBB Penetrant", "Lipinski Pass"]
+                        st.markdown(f"**{name_a or 'Drug A'}**")
+                        for _p in _props_show:
+                            _v = _admet_a.get(_p, "N/A")
+                            if isinstance(_v, bool): _v = "✅" if _v else "❌"
+                            st.markdown(f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1e2a3a;'><span style='color:#78909c;font-size:12px;'>{_p}</span><span style='color:#e0f7fa;font-size:12px;font-weight:500;'>{_v}</span></div>", unsafe_allow_html=True)
+                    with _ac3:
                         st.markdown(f"**{name_b or 'Drug B'}**")
-                        st.metric("MW", f"{_admet_b['MW']} Da")
-                        st.metric("LogP", _admet_b['LogP'])
-                        st.metric("QED", _admet_b['QED'])
-                        st.metric("Solubility", _admet_b['Solubility'])
-                        st.metric("BBB Penetrant", "✅" if _admet_b['BBB Penetrant'] else "❌")
-                        st.metric("Lipinski", "✅ Pass" if _admet_b['Lipinski Pass'] else "❌ Fail")
-                    st.caption("Full breakdown in the 🧪 ADMET Analysis tab")
+                        for _p in _props_show:
+                            _v = _admet_b.get(_p, "N/A")
+                            if isinstance(_v, bool): _v = "✅" if _v else "❌"
+                            st.markdown(f"<div style='display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1e2a3a;'><span style='color:#78909c;font-size:12px;'>{_p}</span><span style='color:#ffe0b2;font-size:12px;font-weight:500;'>{_v}</span></div>", unsafe_allow_html=True)
+                    st.caption("Full 25-property breakdown with pharmacophore counts in the 🧪 ADMET Analysis tab")
             if known:
                 ks,ksc=known
                 st.markdown(f"""<div class="known-score">📚 <strong>NCI ALMANAC Ground Truth</strong><br>
@@ -1752,3 +1961,13 @@ with tab17:
             }
             st.download_button("⬇️ Download JSON",data=json.dumps(_json_data,indent=2,default=str),
                 file_name="synergy_prediction.json",mime="application/json",key="dl_json_btn")
+
+# ── Footer ─────────────────────────────────────────────────────────────────────
+st.markdown("---")
+st.markdown("""<div style="text-align:center;padding:20px 0 10px;color:#546e7a;font-size:12px;">
+<b style="color:#4fc3f7;">ProteinSynergyDock</b> &nbsp;|&nbsp;
+GATv2 Graph Neural Network · AutoDock Vina · Monte Carlo Uncertainty · FHIR R4 &nbsp;|&nbsp;
+<a href="https://github.com/Aprameya05/ProteinSynergyDock-App" style="color:#4fc3f7;text-decoration:none;">GitHub</a> &nbsp;·&nbsp;
+<a href="https://proteinsynergydock-fhir-api.onrender.com/docs" style="color:#4fc3f7;text-decoration:none;">FHIR API</a><br>
+<span style="color:#37474f;">Research tool only — not for clinical use. Trained on 107,103 NCI ALMANAC triplets.</span>
+</div>""", unsafe_allow_html=True)
