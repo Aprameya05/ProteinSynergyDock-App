@@ -91,7 +91,7 @@ export default function PredictPage() {
     setLoading(true);
     setError(null);
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://proteinsynergydock-fhir-api.onrender.com';
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://proteinsynergydock-backend-production.up.railway.app';
 
     try {
       const resp = await fetch(`${apiUrl}/predict`, {
