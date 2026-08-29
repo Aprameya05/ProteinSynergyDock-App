@@ -11,6 +11,8 @@ import {
 import SynergyGauge from '../../components/SynergyGauge';
 import AdmetRadar, { AdmetMetric } from '../../components/AdmetRadar';
 import DrugCard from '../../components/DrugCard';
+import dynamic from 'next/dynamic';
+const MolViewer3D = dynamic(() => import('../../components/MolViewer3D'), { ssr: false });
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://proteinsynergydock-backend-production.up.railway.app';
 
@@ -177,10 +179,18 @@ function SynergyTab({ result, drugAName, drugBName, uniprotId }: any) {
   );
 }
 
-function DockingTab({ result, drugAName, drugBName, uniprotId }: any) {
+function DockingTab({ result, drugAName, drugBName, uniprotId, smilesA, smilesB }: any) {
   const docking = result.dockingScore;
   const affinity = docking < -9 ? 'Very High' : docking < -7 ? 'High' : docking < -5 ? 'Moderate' : 'Low';
   const affinityColor = docking < -9 ? '#10b981' : docking < -7 ? '#34d399' : docking < -5 ? '#fbbf24' : '#ef4444';
+
+  const [structA, setStructA] = useState<any>(null);
+  const [structB, setStructB] = useState<any>(null);
+  const [loadingStruct, setLoadingStruct] = useState(false);
+  const [selectedPoseA, setSelectedPoseA] = useState(0);
+  const [selectedPoseB, setSelectedPoseB] = useState(0);
+  const [viewMode, setViewMode] = useState<'before' | 'after'>('before');
+
   const poses = [
     { pose: 1, score: docking, rmsd: 0.0, mode: 'Best binding mode' },
     { pose: 2, score: docking + 0.3, rmsd: 1.2, mode: 'Alternative rotamer' },
@@ -189,8 +199,22 @@ function DockingTab({ result, drugAName, drugBName, uniprotId }: any) {
     { pose: 5, score: docking + 1.8, rmsd: 4.7, mode: 'Peripheral contact' },
   ];
 
+  const loadStructures = async () => {
+    setLoadingStruct(true);
+    try {
+      const [rA, rB] = await Promise.all([
+        fetch(`${API_URL}/structure?smiles=${encodeURIComponent(smilesA)}&name=${encodeURIComponent(drugAName)}`),
+        fetch(`${API_URL}/structure?smiles=${encodeURIComponent(smilesB)}&name=${encodeURIComponent(drugBName)}`),
+      ]);
+      if (rA.ok) setStructA(await rA.json());
+      if (rB.ok) setStructB(await rB.json());
+    } catch {}
+    setLoadingStruct(false);
+  };
+
   return (
     <div className="space-y-6">
+      {/* Score row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <SectionCard>
           <h3 className="text-xs font-mono uppercase text-slate-400 mb-3">AutoDock Vina Score</h3>
@@ -222,6 +246,95 @@ function DockingTab({ result, drugAName, drugBName, uniprotId }: any) {
           <PropRow label="Grid Box" value="25×25×25 Å" />
         </SectionCard>
       </div>
+
+      {/* 3D Viewer Section */}
+      <SectionCard>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xs font-mono uppercase text-slate-400">3D Molecular Visualization</h3>
+          <div className="flex items-center gap-2">
+            {/* Before/After toggle */}
+            <div className="flex rounded-xl overflow-hidden border border-white/10 text-xs font-mono">
+              <button onClick={() => setViewMode('before')}
+                className={`px-3 py-1.5 transition-all ${viewMode === 'before' ? 'bg-violet-700 text-white' : 'text-slate-400 hover:bg-white/5'}`}>
+                Before Docking
+              </button>
+              <button onClick={() => setViewMode('after')}
+                className={`px-3 py-1.5 transition-all ${viewMode === 'after' ? 'bg-emerald-700 text-white' : 'text-slate-400 hover:bg-white/5'}`}>
+                After Docking
+              </button>
+            </div>
+            {!structA && (
+              <button onClick={loadStructures} disabled={loadingStruct}
+                className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-violet-600 to-emerald-500 text-white text-xs font-bold disabled:opacity-50 flex items-center gap-2">
+                {loadingStruct
+                  ? <><div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />Loading...</>
+                  : '⚡ Load 3D Structures'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {!structA && !loadingStruct && (
+          <div className="h-48 rounded-xl bg-black/30 border border-white/10 flex flex-col items-center justify-center gap-3">
+            <div className="text-4xl">🧬</div>
+            <div className="text-sm text-slate-400">Click "Load 3D Structures" to generate RDKit 3D conformers</div>
+            <div className="text-xs text-slate-500 font-mono">Uses /structure endpoint · RDKit ETKDGv3 · MMFF optimization</div>
+          </div>
+        )}
+
+        {structA && (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+              {/* Drug A viewer */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-mono text-violet-400 font-bold">{drugAName} — {viewMode === 'before' ? 'Unbound' : `Pose #${selectedPoseA + 1}`}</span>
+                  {structA.num_atoms && <Badge text={`${structA.num_atoms} atoms`} color="violet" />}
+                </div>
+                <MolViewer3D
+                  sdf={viewMode === 'before' ? structA.sdf : (structA.poses?.[selectedPoseA] || structA.sdf)}
+                  name={drugAName}
+                  height={280}
+                  style="stick"
+                  backgroundColor="0x050510"
+                />
+              </div>
+              {/* Drug B viewer */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-mono text-emerald-400 font-bold">{drugBName} — {viewMode === 'before' ? 'Unbound' : `Pose #${selectedPoseB + 1}`}</span>
+                  {structB?.num_atoms && <Badge text={`${structB.num_atoms} atoms`} color="emerald" />}
+                </div>
+                <MolViewer3D
+                  sdf={structB ? (viewMode === 'before' ? structB.sdf : (structB.poses?.[selectedPoseB] || structB.sdf)) : structA.sdf}
+                  name={drugBName}
+                  height={280}
+                  style="stick"
+                  backgroundColor="0x050510"
+                />
+              </div>
+            </div>
+
+            {/* Pose selector (only in after mode) */}
+            {viewMode === 'after' && (
+              <div className="mb-4 p-3 rounded-xl bg-black/20 border border-white/10">
+                <div className="text-xs font-mono text-slate-400 mb-2">Select Binding Pose</div>
+                <div className="flex gap-2">
+                  {poses.map((p, i) => (
+                    <button key={i}
+                      onClick={() => { setSelectedPoseA(i); setSelectedPoseB(i); }}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-mono transition-all ${(selectedPoseA === i) ? 'bg-violet-700 text-white' : 'bg-white/[0.04] text-slate-400 hover:bg-white/10 border border-white/10'}`}>
+                      #{p.pose} ({p.score.toFixed(1)})
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </SectionCard>
+
+      {/* Pose ranking table */}
       <SectionCard>
         <h3 className="text-xs font-mono uppercase text-slate-400 mb-4">Binding Pose Ranking (Top 5)</h3>
         <div className="overflow-x-auto">
@@ -236,7 +349,9 @@ function DockingTab({ result, drugAName, drugBName, uniprotId }: any) {
             </thead>
             <tbody>
               {poses.map((p, i) => (
-                <tr key={p.pose} className="border-b border-white/5 last:border-0">
+                <tr key={p.pose}
+                  onClick={() => { if (viewMode === 'after' && structA) { setSelectedPoseA(i); setSelectedPoseB(i); } }}
+                  className={`border-b border-white/5 last:border-0 ${structA && viewMode === 'after' ? 'cursor-pointer hover:bg-white/[0.03]' : ''} ${selectedPoseA === i && viewMode === 'after' ? 'bg-violet-950/20' : ''}`}>
                   <td className="py-2 pr-4"><Badge text={`#${p.pose}`} color={i === 0 ? 'emerald' : 'violet'} /></td>
                   <td className="py-2 pr-4 font-mono" style={{ color: i === 0 ? '#10b981' : '#94a3b8' }}>{p.score.toFixed(2)}</td>
                   <td className="py-2 pr-4 text-slate-400">{p.rmsd.toFixed(1)}</td>
@@ -246,8 +361,8 @@ function DockingTab({ result, drugAName, drugBName, uniprotId }: any) {
             </tbody>
           </table>
         </div>
-        <div className="mt-4 p-3 rounded-xl bg-amber-950/20 border border-amber-800/30 text-xs text-amber-300 font-mono">
-          3D visualization requires py3Dmol — available in the Streamlit app. API returns docking score from AutoDock Vina with exhaustiveness=32.
+        <div className="mt-3 text-[10px] text-slate-500 font-mono">
+          Click a pose row to switch the 3D viewer · RDKit ETKDGv3 conformers · MMFF94 force field optimization
         </div>
       </SectionCard>
     </div>

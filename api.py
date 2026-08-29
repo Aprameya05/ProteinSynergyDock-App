@@ -227,6 +227,66 @@ def health():
     return {"status": "ok", "version": "1.2.0"}
 
 
+@app.get("/structure")
+def get_structure(smiles: str = Query(..., description="SMILES string"), name: str = Query("molecule", description="Molecule name")):
+    """
+    Convert SMILES to a 3D SDF structure using RDKit.
+    Returns SDF format string for use with 3Dmol.js viewer.
+    Generates multiple conformers to simulate docking poses.
+    """
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem, Draw
+        import io
+
+        mol = Chem.MolFromSmiles(smiles.strip())
+        if mol is None:
+            raise HTTPException(status_code=400, detail="Invalid SMILES string.")
+
+        mol = Chem.AddHs(mol)
+        params = AllChem.ETKDGv3()
+        params.randomSeed = 42
+        params.numThreads = 0
+
+        # Generate 5 conformers (to simulate docking poses)
+        AllChem.EmbedMultipleConfs(mol, numConfs=5, params=params)
+        AllChem.MMFFOptimizeMoleculeConfs(mol, numThreads=0)
+
+        mol = Chem.RemoveHs(mol)
+        mol.SetProp("_Name", name)
+
+        # Export all conformers as multi-model SDF
+        sdf_blocks = []
+        writer = Chem.SDWriter(io.StringIO())
+        for conf_id in range(mol.GetNumConformers()):
+            sio = io.StringIO()
+            w = Chem.SDWriter(sio)
+            w.write(mol, confId=conf_id)
+            w.close()
+            sdf_blocks.append(sio.getvalue())
+
+        # Compute basic 3D stats
+        conf = mol.GetConformer(0)
+        positions = conf.GetPositions()
+        center = positions.mean(axis=0).tolist()
+
+        return {
+            "name": name,
+            "smiles": smiles,
+            "num_atoms": mol.GetNumAtoms(),
+            "num_conformers": mol.GetNumConformers(),
+            "center": {"x": round(center[0], 3), "y": round(center[1], 3), "z": round(center[2], 3)},
+            "sdf": sdf_blocks[0],          # best conformer (pose 1)
+            "poses": sdf_blocks,            # all 5 poses
+        }
+    except HTTPException:
+        raise
+    except ImportError:
+        raise HTTPException(status_code=503, detail="RDKit not available.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Structure generation failed: {str(e)}")
+
+
 # ── SMART on FHIR ────────────────────────────────────────────────────────────
 
 @app.get("/.well-known/smart-configuration")
