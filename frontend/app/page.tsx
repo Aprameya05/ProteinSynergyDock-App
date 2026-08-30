@@ -1,199 +1,76 @@
 'use client';
-
-import React from 'react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
-import {
-  Sparkles,
-  Dna,
-  Zap,
-  Activity,
-  ShieldCheck,
-  ArrowRight,
-  Database,
-  Layers,
-  Cpu,
-  Award,
-} from 'lucide-react';
 
 export default function LandingPage() {
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.15,
-      },
-    },
-  };
-
-  const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.5 } },
-  };
-
   return (
-    <div className="relative overflow-hidden">
-      {/* Background Hero Grid */}
-      <div className="absolute inset-0 bg-grid-pattern opacity-15 pointer-events-none -z-10" />
+    <div style={{ minHeight: '100vh', background: 'var(--bg)', position: 'relative', overflow: 'hidden' }}>
+      {/* Glow orbs */}
+      <div style={{ position: 'absolute', top: '10%', left: '15%', width: 400, height: 400, borderRadius: '50%', background: 'radial-gradient(circle, rgba(124,58,237,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: '30%', right: '10%', width: 300, height: 300, borderRadius: '50%', background: 'radial-gradient(circle, rgba(6,214,160,0.10) 0%, transparent 70%)', pointerEvents: 'none' }} />
 
-      {/* Hero Section */}
-      <section className="relative pt-24 pb-20 md:pt-32 md:pb-28 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col items-center text-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6 }}
-          className="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-violet-950/70 border border-violet-700/50 text-violet-300 text-xs font-mono font-medium mb-8 shadow-violet-glow"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-          <span>GATv2 Architecture &bull; 800,000 Combination Triplets</span>
-        </motion.div>
+      <div style={{ maxWidth: 1100, margin: '0 auto', padding: '100px 24px 80px', position: 'relative', zIndex: 1 }}>
+        {/* Hero */}
+        <div style={{ textAlign: 'center', marginBottom: 72 }}>
+          <div className="badge" style={{ display: 'inline-flex', marginBottom: 28 }}>
+            <div className="badge-dot" />
+            GATv2 Architecture · 107,103 NCI ALMANAC Triplets
+          </div>
+          <h1 style={{ fontSize: 'clamp(2.8rem, 6vw, 5rem)', fontWeight: 900, lineHeight: 1.06, letterSpacing: '-0.04em', marginBottom: 24 }}>
+            Precision Drug<br />
+            <span className="grad-text">Synergy Engine.</span>
+          </h1>
+          <p style={{ fontSize: 17, color: 'var(--muted)', maxWidth: 580, margin: '0 auto 40px', lineHeight: 1.65 }}>
+            Predict dual-drug synergy, molecular docking affinity, and 6-axis ADMET pharmacokinetics in real-time powered by Graph Attention Networks.
+          </p>
+          <div style={{ display: 'flex', gap: 14, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <Link href="/predict" className="btn-primary" style={{ textDecoration: 'none', display: 'inline-block', fontSize: 15 }}>
+              Launch Synergy Predictor →
+            </Link>
+            <a href="https://github.com/Aprameya05/ProteinSynergyDock-App" target="_blank" rel="noreferrer" className="btn-ghost" style={{ textDecoration: 'none', display: 'inline-block', fontSize: 14, padding: '11px 24px' }}>
+              GitHub ↗
+            </a>
+          </div>
+        </div>
 
-        <motion.h1
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.1 }}
-          className="text-4xl sm:text-6xl md:text-7xl font-extrabold tracking-tight text-white max-w-4xl leading-[1.1]"
-        >
-          Precision Drug Combination Synergy &{' '}
-          <span className="gradient-text-violet-emerald">
-            ADMET AI System
-          </span>
-        </motion.h1>
-
-        <motion.p
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.2 }}
-          className="mt-6 text-lg sm:text-xl text-slate-300 max-w-2xl font-normal leading-relaxed"
-        >
-          Predict dual-drug synergy, molecular docking affinity, and 6-axis ADMET pharmacokinetics in real-time powered by Graph Attention Networks.
-        </motion.p>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.3 }}
-          className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4 w-full max-w-md"
-        >
-          <Link
-            href="/predict"
-            className="w-full sm:w-auto px-8 py-4 rounded-xl bg-gradient-to-r from-violet-600 to-emerald-500 hover:from-violet-500 hover:to-emerald-400 text-white font-semibold text-base shadow-violet-glow flex items-center justify-center space-x-2 transition-all transform hover:-translate-y-0.5"
-          >
-            <span>Launch Synergy Predictor</span>
-            <ArrowRight className="w-5 h-5" />
-          </Link>
-          <a
-            href="#architecture"
-            className="w-full sm:w-auto px-8 py-4 rounded-xl glass-card hover:bg-white/10 text-slate-200 font-medium text-base border border-white/10 flex items-center justify-center transition-all"
-          >
-            Explore Architecture
-          </a>
-        </motion.div>
-
-        {/* Live Metrics Highlights */}
-        <motion.div
-          variants={containerVariants}
-          initial="hidden"
-          animate="visible"
-          className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-4 w-full max-w-4xl"
-        >
-          {[
-            { label: 'Combined Pair Samples', val: '800,000+', icon: Database, color: 'text-violet-400' },
-            { label: 'Pearson Correlation r', val: '0.842', icon: Activity, color: 'text-emerald-400' },
-            { label: 'NCI-60 Cell Line Models', val: '60 Lines', icon: Dna, color: 'text-cyan-400' },
-            { label: 'Inference Latency', val: '< 180 ms', icon: Zap, color: 'text-amber-400' },
-          ].map((stat, i) => (
-            <motion.div
-              key={i}
-              variants={itemVariants}
-              className="glass-card rounded-2xl p-5 border border-white/10 flex flex-col items-center"
-            >
-              <stat.icon className={`w-6 h-6 ${stat.color} mb-2`} />
-              <span className="text-2xl font-extrabold font-mono text-white tracking-tight">
-                {stat.val}
-              </span>
-              <span className="text-xs text-slate-400 mt-1">{stat.label}</span>
-            </motion.div>
+        {/* Stats */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 1, borderRadius: 12, overflow: 'hidden', border: '1px solid var(--border)', marginBottom: 56 }}>
+          {[['800,000+', 'Drug Combinations'], ['0.842', 'AUC-ROC Score'], ['60', 'NCI-60 Cell Lines'], ['< 180ms', 'Inference Time']].map(([v, l]) => (
+            <div key={l} style={{ padding: '28px 24px', textAlign: 'center', background: 'var(--surface)' }}>
+              <div className="grad-text" style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.02em', marginBottom: 6 }}>{v}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'JetBrains Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{l}</div>
+            </div>
           ))}
-        </motion.div>
-      </section>
-
-      {/* Feature Grid */}
-      <section id="architecture" className="py-20 relative border-t border-white/10 bg-[#07070c]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center max-w-3xl mx-auto mb-16">
-            <h2 className="text-xs uppercase tracking-widest font-mono text-emerald-400 font-semibold">
-              Deep Learning Engine
-            </h2>
-            <p className="mt-2 text-3xl sm:text-4xl font-extrabold text-white tracking-tight">
-              Multimodal Graph Neural Network & Docking Pipeline
-            </p>
-            <p className="mt-4 text-slate-400">
-              End-to-end synergy prediction combining molecular graphs, gene ontology target embeddings, and RDKit ADMET profiles.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <div className="glass-card glass-card-hover rounded-2xl p-8 border border-white/10 flex flex-col">
-              <div className="w-12 h-12 rounded-xl bg-violet-950/80 border border-violet-700/50 flex items-center justify-center text-violet-400 mb-6 shadow-violet-glow">
-                <Cpu className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-3">GATv2 Graph Encoder</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                4-head dynamic graph attention network operating directly on 2D chemical bond matrices and atom features to construct invariant drug embeddings.
-              </p>
-            </div>
-
-            <div className="glass-card glass-card-hover rounded-2xl p-8 border border-white/10 flex flex-col">
-              <div className="w-12 h-12 rounded-xl bg-emerald-950/80 border border-emerald-700/50 flex items-center justify-center text-emerald-400 mb-6 shadow-emerald-glow">
-                <Layers className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-3">Cross-Drug Attention</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                Bidirectional Multi-Head Attention layer captures polypharmacological cross-talk between Drug A and Drug B at active binding sites.
-              </p>
-            </div>
-
-            <div className="glass-card glass-card-hover rounded-2xl p-8 border border-white/10 flex flex-col">
-              <div className="w-12 h-12 rounded-xl bg-cyan-950/80 border border-cyan-700/50 flex items-center justify-center text-cyan-400 mb-6 shadow-glass">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-              <h3 className="text-xl font-bold text-white mb-3">6-Axis ADMET Radar</h3>
-              <p className="text-sm text-slate-400 leading-relaxed">
-                RDKit-driven evaluation of Delaney solubility, Clark BBB penetration, QED drug-likeness, TPSA, and Lipinski compliance.
-              </p>
-            </div>
-          </div>
         </div>
-      </section>
 
-      {/* Symposium CTA Banner */}
-      <section className="py-16 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="glass-card rounded-3xl p-8 sm:p-12 border border-violet-500/30 relative overflow-hidden flex flex-col md:flex-row items-center justify-between gap-8 shadow-violet-glow">
-          <div className="absolute top-0 right-0 w-96 h-96 glow-orb-emerald -z-10" />
-          
-          <div className="max-w-2xl">
-            <div className="flex items-center space-x-2 text-xs font-mono text-emerald-400 uppercase font-semibold mb-2">
-              <Award className="w-4 h-4" />
-              <span>National Industry Symposium Edition</span>
+        {/* Feature grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16, marginBottom: 56 }}>
+          {[
+            { icon: '⬡', title: 'GATv2 Graph Neural Network', desc: 'Multi-head graph attention over molecular graphs. Trained on 107,103 NCI ALMANAC triplets.', color: '#a78bfa' },
+            { icon: '⚛', title: 'AutoDock Vina Docking', desc: 'Molecular docking affinity scores with 5-pose binding mode analysis and RMSD metrics.', color: '#5eead4' },
+            { icon: '◈', title: '6-Axis ADMET Profiling', desc: 'Absorption, Distribution, Metabolism, Excretion, Toxicity, Bioavailability radar.', color: '#22d3ee' },
+            { icon: '⬡', title: 'FHIR R4 Integration', desc: 'DiagnosticReport generation, hash-chained audit log, SMART on FHIR OAuth2.', color: '#a78bfa' },
+            { icon: '⊕', title: 'CDS Hooks', desc: 'Real-time clinical decision support via medication-prescribe webhook integration.', color: '#5eead4' },
+            { icon: '∿', title: 'Bliss · CI · Dose-Response', desc: 'Chou-Talalay CI, Bliss independence model, Hill equation dose-response tables.', color: '#22d3ee' },
+          ].map(({ icon, title, desc, color }) => (
+            <div key={title} className="glass" style={{ borderRadius: 12, padding: 24, transition: 'border-color 0.2s' }}>
+              <div style={{ fontSize: 22, marginBottom: 12, color }}>{icon}</div>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: 'var(--text)' }}>{title}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>{desc}</div>
             </div>
-            <h3 className="text-2xl sm:text-3xl font-extrabold text-white">
-              Ready to analyze drug pairs in real-time?
-            </h3>
-            <p className="mt-2 text-slate-300 text-sm">
-              Input SMILES strings or choose from pre-curated oncological pairs to compute synergy scores and full ADMET pharmacokinetic profiles.
-            </p>
-          </div>
+          ))}
+        </div>
 
-          <Link
-            href="/predict"
-            className="px-8 py-4 rounded-xl bg-gradient-to-r from-violet-600 to-emerald-500 hover:from-violet-500 hover:to-emerald-400 text-white font-bold text-sm shadow-violet-glow flex-shrink-0 transition-transform hover:scale-105"
-          >
-            Launch Predictor App &rarr;
+        {/* CTA */}
+        <div className="glass-strong" style={{ borderRadius: 16, padding: '48px 40px', textAlign: 'center' }}>
+          <h2 style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-0.03em', marginBottom: 12 }}>
+            Ready to predict <span className="grad-text">synergy?</span>
+          </h2>
+          <p style={{ color: 'var(--muted)', fontSize: 14, marginBottom: 28 }}>Enter SMILES notation, UniProt ID, and cell line — results in under 180ms.</p>
+          <Link href="/predict" className="btn-primary" style={{ textDecoration: 'none', display: 'inline-block', fontSize: 15 }}>
+            Open Predictor →
           </Link>
         </div>
-      </section>
+      </div>
     </div>
   );
 }
