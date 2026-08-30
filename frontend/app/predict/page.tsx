@@ -1,10 +1,8 @@
 'use client';
 
-export const dynamic = 'force-static';
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import dynamic from 'next/dynamic';
-const MolViewer3D = dynamic(() => import('../../components/MolViewer3D'), { ssr: false });
+import nextDynamic from 'next/dynamic';
+const MolViewer3D = nextDynamic(() => import('../../components/MolViewer3D'), { ssr: false });
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://proteinsynergydock-backend-production.up.railway.app';
 
