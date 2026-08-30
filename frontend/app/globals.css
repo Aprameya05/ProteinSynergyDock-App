@@ -254,3 +254,18 @@ body {
 .glow-violet { box-shadow: 0 0 40px rgba(124,58,237,0.25); }
 .glow-teal { box-shadow: 0 0 40px rgba(6,214,160,0.2); }
 .text-glow-teal { text-shadow: 0 0 20px rgba(6,214,160,0.6); }
+
+/* ─── Nav ─── */
+.nav-link {
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  transition: color 0.15s;
+}
+.nav-link:hover { color: var(--text); }
+
+/* ─── Utils ─── */
+.mt-1 { margin-top: 4px; }
+.mt-4 { margin-top: 16px; }

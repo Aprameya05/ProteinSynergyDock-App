@@ -30,11 +30,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </Link>
             <nav style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               {[['Platform', '/'], ['Predictor', '/predict'], ['GitHub', 'https://github.com/Aprameya05/ProteinSynergyDock-App']].map(([label, href]) => (
-                <Link key={label} href={href}
-                  style={{ fontSize: 13, color: 'var(--muted)', textDecoration: 'none', padding: '6px 12px', borderRadius: 6, transition: 'color 0.15s' }}
-                  onMouseEnter={e => (e.target as HTMLElement).style.color = 'var(--text)'}
-                  onMouseLeave={e => (e.target as HTMLElement).style.color = 'var(--muted)'}
-                >{label}</Link>
+                <Link key={label} href={href} className="nav-link">{label}</Link>
               ))}
               <Link href="/predict" style={{
                 background: 'linear-gradient(135deg, #7c3aed, #06d6a0)',

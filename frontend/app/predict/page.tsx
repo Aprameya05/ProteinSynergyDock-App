@@ -1,5 +1,7 @@
 'use client';
 
+export const dynamic = 'force-static';
+
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 const MolViewer3D = dynamic(() => import('../../components/MolViewer3D'), { ssr: false });
