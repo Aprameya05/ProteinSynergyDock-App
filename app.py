@@ -67,7 +67,7 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
 
 /* ── Sidebar history items ── */
 .history-item{
-  background:rgba(26,26,46,0.9);border-left:3px solid #4fc3f7;
+  background:rgba(255,255,255,0.92);border-left:3px solid #4fc3f7;
   padding:10px 12px;border-radius:6px;margin:6px 0;color:white;font-size:12px;
   transition:border-color 0.2s;
 }
@@ -80,17 +80,18 @@ html,body,[class*="css"]{font-family:'Inter',sans-serif;}
   font-weight:600;letter-spacing:0.5px;margin-left:6px;
 }
 .sidebar-stat{display:flex;justify-content:space-between;align-items:center;
-  padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);}
-.sidebar-stat .val{color:#4fc3f7;font-weight:600;}
+  padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.08);color:#374151;}
+.sidebar-stat .val{color:#1565c0;font-weight:600;}
 
 /* ── Metric tiles ── */
 .metric-tile{
-  background:rgba(13,19,40,0.9);border:1px solid rgba(79,195,247,0.15);
+  background:rgba(255,255,255,0.92);border:1px solid rgba(79,195,247,0.25);
   border-radius:10px;padding:14px 16px;text-align:center;
+  box-shadow:0 2px 8px rgba(0,0,0,0.08);
 }
-.metric-tile .num{font-size:1.6rem;font-weight:700;color:#4fc3f7;}
-.metric-tile .lbl{font-size:11px;color:#78909c;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
-.metric-tile .sub{font-size:11px;color:#546e7a;margin-top:2px;}
+.metric-tile .num{font-size:1.6rem;font-weight:700;color:#1565c0;}
+.metric-tile .lbl{font-size:11px;color:#546e7a;text-transform:uppercase;letter-spacing:0.5px;margin-top:2px;}
+.metric-tile .sub{font-size:11px;color:#78909c;margin-top:2px;}
 
 /* ── Pipeline status ── */
 .pipe-step{padding:6px 10px;border-radius:6px;margin:3px 0;font-size:13px;}
@@ -219,7 +220,7 @@ with st.sidebar:
     # Model info as stat table
     mv_label = model_version.upper() if model_version != 'none' else 'Not loaded'
     st.markdown(f"""### 🤖 Model
-<div style="background:rgba(13,19,40,0.8);border:1px solid rgba(79,195,247,0.15);border-radius:10px;padding:12px 14px;margin:6px 0;">
+<div style="background:rgba(255,255,255,0.92);border:1px solid rgba(79,195,247,0.25);border-radius:10px;padding:12px 14px;margin:6px 0;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
 <div class="sidebar-stat"><span>Version</span><span class="val">{mv_label} <span class="model-badge">GATv2</span></span></div>
 <div class="sidebar-stat"><span>Pearson r</span><span class="val">{model_r:.4f}</span></div>
 <div class="sidebar-stat"><span>AUROC</span><span class="val">{model_auroc:.4f}</span></div>
